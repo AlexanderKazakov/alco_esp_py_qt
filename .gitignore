@@ -1,0 +1,9 @@
+/.idea/
+.run/local/
+/data/
+/venv/
+/.venv/
+__pycache__
+/alco_esp/build_output/
+/alco_esp/log/
+/alco_esp/secrets.py
