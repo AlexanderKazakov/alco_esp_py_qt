@@ -12,7 +12,7 @@ VENV_DIR="$BUILD_ROOT/venv" # Virtual environment inside BUILD_ROOT
 DIST_DIR="$BUILD_ROOT/dist" # Output directory for the final build inside BUILD_ROOT
 WORK_DIR="$BUILD_ROOT/build_pyinstaller" # Temporary build directory for PyInstaller inside BUILD_ROOT
 
-# --- This script is for a modern 64-bit Linux OS ---
+# --- This script is for a modern 64-bit Linux OS. Run it from its directory (/alco_esp) ---
 
 echo "--- Starting PyInstaller build for $PYTHON_SCRIPT ---"
 

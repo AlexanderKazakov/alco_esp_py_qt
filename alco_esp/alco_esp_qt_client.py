@@ -702,6 +702,7 @@ class AlcoEspMonitor(QMainWindow):
         self.ax.clear() # Clear existing axes
         self.ax.set_title("Температуры")
         self.ax.set_ylabel("°C")
+        self.ax.set_ylim(10, 110)
         
         self.base_line_labels = {
             "term_c": "T царга (term_c)",
@@ -859,7 +860,7 @@ class AlcoEspMonitor(QMainWindow):
                 self.lines[key].set_label(f"{base_label}{value_str}")
 
         self.ax.relim()
-        self.ax.autoscale_view(True, True, True)
+        self.ax.autoscale_view(True, True, False)
         self.ax.legend(loc='upper left')
 
         # Adjust x-axis limits based on the actual time range present in the data
@@ -990,8 +991,7 @@ class AlcoEspMonitor(QMainWindow):
             logger.debug(f"{name_for_log} signal monitoring is NOT active.")
             message = f"{name_for_ui}: Мониторинг отключен"
             style_sheet = STYLE_INACTIVE
-            
-        logger.debug(f"{name_for_log} signal label set to: '{message}', style: '{style_sheet}'")
+
         label_widget.setText(message)
         label_widget.setStyleSheet(style_sheet)
 
@@ -1072,7 +1072,6 @@ class AlcoEspMonitor(QMainWindow):
             message = f"ΔT: Мониторинг отключен"
             style_sheet = STYLE_INACTIVE
 
-        logger.debug(f"Stability signal label set to: '{message}', style: '{style_sheet}'")
         self.stability_signal_label.setText(message)
         self.stability_signal_label.setStyleSheet(style_sheet)
 

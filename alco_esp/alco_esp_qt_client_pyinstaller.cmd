@@ -11,7 +11,7 @@ SET "VENV_DIR=%BUILD_ROOT%\venv"
 SET "DIST_DIR=%BUILD_ROOT%\dist"
 SET "WORK_DIR=%BUILD_ROOT%\build_pyinstaller"
 
-REM --- This script is for a 32-bit Windows OS ---
+REM --- This script is for a 32-bit Windows OS. Run it from its directory (/alco_esp) ---
 
 ECHO --- Starting PyInstaller build for %PYTHON_SCRIPT% ---
 
