@@ -25,6 +25,15 @@ client_id = "python_qt_client_viewer" # Changed client ID slightly
 # Updated topics to subscribe to based on new requirements
 topics = ["term_c", "term_k", "term_d", "work"]
 
+# --- CSV Logging Settings ---
+CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d", "work"]
+CSV_DATA_HEADERS = {
+    "term_c": "T царга",
+    "term_k": "T куб",
+    "term_d": "T дефлегматор",
+    "work": "Режим работы"
+}
+
 # Path to the directory of the script or to the Pyinstaller executable directory
 # to get the resources and to write logs to
 APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -782,6 +791,18 @@ class AlcoEspMonitor(QMainWindow):
                     if topic in data: # data is a global dictionary in your script
                         data[topic].append(work_value)
                         timestamps[topic].append(current_time)
+
+                    # --- CSV Logging for 'work' topic ---
+                    try:
+                        time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
+                        values = [''] * len(CSV_DATA_TOPIC_ORDER)
+                        idx = CSV_DATA_TOPIC_ORDER.index(topic)
+                        values[idx] = str(work_value)
+                        log_line = f"{time_str};" + ";".join(values)
+                        data_logger.info(log_line)
+                    except Exception as e:
+                        logger.error(f"Failed to write data to CSV for topic {topic}: {e}", exc_info=True)
+                
                 # If it's an echo, we do nothing further with this message for 'work' topic.
 
             elif topic in ["term_c", "term_k", "term_d"]:
@@ -790,6 +811,17 @@ class AlcoEspMonitor(QMainWindow):
                 if topic in data: # data is a global dictionary
                     data[topic].append(temp_value)
                     timestamps[topic].append(current_time)
+
+                # --- CSV Logging for temperature topics ---
+                try:
+                    time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
+                    values = [''] * len(CSV_DATA_TOPIC_ORDER)
+                    idx = CSV_DATA_TOPIC_ORDER.index(topic)
+                    values[idx] = str(temp_value)
+                    log_line = f"{time_str};" + ";".join(values)
+                    data_logger.info(log_line)
+                except Exception as e:
+                    logger.error(f"Failed to write data to CSV for topic {topic}: {e}", exc_info=True)
             
             else:
                 # print(f"Warning: Received message for unexpected topic '{topic}'")
@@ -1098,6 +1130,61 @@ class AlcoEspMonitor(QMainWindow):
         event.accept()
 
 
+class CsvRotatingFileHandler(RotatingFileHandler):
+    """
+    A RotatingFileHandler that writes a header to new files.
+    """
+    def __init__(self, filename, *args, header=None, **kwargs):
+        self.header = header
+        # We need to determine if the header needs to be written BEFORE the file is opened for appending.
+        # The base class opens the file in its __init__.
+        # So, we check for file existence and size here.
+        write_header = not os.path.exists(filename) or os.path.getsize(filename) == 0
+
+        super().__init__(filename, *args, **kwargs)
+
+        if write_header and self.header:
+            self.stream.write(self.header + '\n')
+            self.stream.flush()
+
+    def doRollover(self):
+        super().doRollover()
+        # After rollover, the new file (self.baseFilename) is empty.
+        # The stream has been reopened by the base class.
+        if self.header:
+            self.stream.write(self.header + '\n')
+            self.stream.flush()
+
+
+def setup_data_logging():
+    """Sets up a separate logger for CSV data."""
+    data_logger.setLevel(logging.INFO)
+
+    log_dir = os.path.join(APP_ROOT_DIR, "log")
+    log_file = os.path.join(log_dir, "alco_esp_data.csv")
+    csv_header = "Время;" + ";".join([CSV_DATA_HEADERS[topic] for topic in CSV_DATA_TOPIC_ORDER])
+
+    # Use our custom handler to manage the header
+    file_handler = CsvRotatingFileHandler(
+        log_file,
+        mode='a',
+        maxBytes=100 * 1024 * 1024,
+        backupCount=5,
+        encoding='utf-8',
+        header=csv_header
+    )
+
+    # Formatter that just passes the message through, as we format it ourselves.
+    formatter = logging.Formatter('%(message)s')
+    file_handler.setFormatter(formatter)
+
+    data_logger.addHandler(file_handler)
+
+    # Prevent data logs from propagating to the root logger (and thus the console)
+    data_logger.propagate = False
+    logger.info("Data logging to CSV setup complete.")
+
+
 def setup_logging():
     logger.setLevel(logging.DEBUG)  # Set the logging level for the logger
 
@@ -1114,8 +1201,8 @@ def setup_logging():
             log_dir = APP_ROOT_DIR
 
     log_file = os.path.join(log_dir, "alco_esp_monitor.log")
-    # Rotate log file when it reaches 2MB, keep 5 backup logs
-    file_handler = RotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=5, encoding='utf-8')
+    # Rotate log file when it reaches 100MB, keep 5 backup logs
+    file_handler = RotatingFileHandler(log_file, maxBytes=100 * 1024 * 1024, backupCount=5, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)  # Log everything to file
 
     # Create a console handler for higher level messages
@@ -1141,7 +1228,9 @@ def setup_logging():
 if __name__ == '__main__':
     # --- Global Logger Setup ---
     logger = logging.getLogger("AlcoEspMonitorApp")
+    data_logger = logging.getLogger("AlcoEspDataLogger")
     setup_logging() # Call setup_logging here
+    setup_data_logging()
     logger.info("Application starting...")
 
     app = QApplication(sys.argv)
