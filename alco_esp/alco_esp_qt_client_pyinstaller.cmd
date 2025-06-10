@@ -11,7 +11,7 @@ SET "VENV_DIR=%BUILD_ROOT%\venv"
 SET "DIST_DIR=%BUILD_ROOT%\dist"
 SET "WORK_DIR=%BUILD_ROOT%\build_pyinstaller"
 
-REM --- Script Logic ---
+REM --- This script is for a 32-bit Windows OS ---
 
 ECHO --- Starting PyInstaller build for %PYTHON_SCRIPT% ---
 
@@ -52,7 +52,7 @@ IF ERRORLEVEL 1 (
     ECHO Failed to upgrade pip. Exiting.
     GOTO :EOF
 )
-pip install -r requirements.txt
+pip install -r ..\requirements_windows_32bit.txt --only-binary :all:
 IF ERRORLEVEL 1 (
     ECHO Failed to install requirements. Exiting.
     GOTO :EOF

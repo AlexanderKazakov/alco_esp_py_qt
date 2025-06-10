@@ -12,7 +12,7 @@ VENV_DIR="$BUILD_ROOT/venv" # Virtual environment inside BUILD_ROOT
 DIST_DIR="$BUILD_ROOT/dist" # Output directory for the final build inside BUILD_ROOT
 WORK_DIR="$BUILD_ROOT/build_pyinstaller" # Temporary build directory for PyInstaller inside BUILD_ROOT
 
-# --- Script Logic ---
+# --- This script is for a modern 64-bit Linux OS ---
 
 echo "--- Starting PyInstaller build for $PYTHON_SCRIPT ---"
 
@@ -41,7 +41,7 @@ source "$VENV_DIR/bin/activate"
 # 3. Install Dependencies
 echo "Installing required packages..."
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r ../requirements_ubuntu_64bit.txt
 
 echo "Packages installed."
 
