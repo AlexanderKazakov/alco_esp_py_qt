@@ -400,7 +400,7 @@ class AlcoEspMonitor(QMainWindow):
             return
 
         self.alarm_sound_effect.setSource(QUrl.fromLocalFile(os.path.abspath(ALARM_FILE_PATH)))
-        self.alarm_sound_effect.setVolume(1.0)
+        self.alarm_sound_effect.setVolume(0.8)
 
         # Connect to statusChanged to know when loading is complete or if an error occurs
         self.alarm_sound_effect.statusChanged.connect(self._on_alarm_sound_status_changed)
