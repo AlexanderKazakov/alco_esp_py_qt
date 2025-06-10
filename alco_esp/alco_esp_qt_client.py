@@ -1,5 +1,6 @@
 import sys
 import signal
+import json
 import paho.mqtt.client as mqtt
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -17,18 +18,19 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from alco_esp.alco_esp_constants import WORK_STATE_NAMES, WorkState
-from .secrets import broker, port, username, password
 
 
 # --- MQTT Settings (Copied from original script) ---
 client_id = "python_qt_client_viewer" # Changed client ID slightly
-topic_prefix = f"{username}/"
 # Updated topics to subscribe to based on new requirements
 topics = ["term_c", "term_k", "work"]
 
 # Path to the directory of the script or to the Pyinstaller executable directory
 # to get the resources and to write logs to
 APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- Secrets Management ---
+SECRETS_FILE_PATH = os.path.join(APP_ROOT_DIR, "secrets.json")
 
 # --- Alarm signal audio file path ---
 # Alarm file is expected to be directly in the APP_ROOT_DIR
@@ -63,6 +65,49 @@ latest_values = {key: None for key in topics}
 DEFAULT_T_SIGNAL_KUB = 60.0  # °C
 DEFAULT_DELTA_T = 0.1       # °C
 DEFAULT_PERIOD_SECONDS = 60 # seconds
+
+
+def load_secrets_with_gui_feedback():
+    """
+    Loads secrets from secrets.json.
+    On error, it logs, shows a QMessageBox, and exits.
+    """
+    if not os.path.exists(SECRETS_FILE_PATH):
+        template_path = os.path.join(APP_ROOT_DIR, "secrets_template.json")
+        msg = f"Secrets file not found: {SECRETS_FILE_PATH}\n\n"
+        if os.path.exists(template_path):
+            msg += "Please copy 'secrets_template.json' to 'secrets.json' and fill in your credentials."
+        else:
+            msg += "The template 'secrets_template.json' is also missing. Cannot continue."
+        logger.critical(msg)
+        QMessageBox.critical(None, "Configuration Error", msg)
+        sys.exit(1)
+
+    try:
+        with open(SECRETS_FILE_PATH, 'r', encoding='utf-8') as f:
+            secrets = json.load(f)
+
+        required_keys = ["broker", "port", "username", "password"]
+        if not all(key in secrets for key in required_keys):
+            missing_keys = [key for key in required_keys if key not in secrets]
+            msg = f"Secrets file {SECRETS_FILE_PATH} is missing required keys: {', '.join(missing_keys)}"
+            logger.critical(msg)
+            QMessageBox.critical(None, "Configuration Error", msg)
+            sys.exit(1)
+
+        logger.info("Successfully loaded secrets from secrets.json.")
+        return secrets
+
+    except json.JSONDecodeError as e:
+        msg = f"Error decoding {SECRETS_FILE_PATH}: {e}"
+        logger.critical(msg, exc_info=True)
+        QMessageBox.critical(None, "Configuration Error", f"Error parsing secrets.json. Is it valid JSON?\n\n{e}")
+        sys.exit(1)
+    except Exception as e:
+        msg = f"An unexpected error occurred while loading secrets: {e}"
+        logger.critical(msg, exc_info=True)
+        QMessageBox.critical(None, "Configuration Error", msg)
+        sys.exit(1)
 
 
 # --- Settings Dialog ---
@@ -262,8 +307,9 @@ class AlcoEspMonitor(QMainWindow):
     # Add signal to request MQTT publication from the worker
     publishRequested = pyqtSignal(str, str)
 
-    def __init__(self):
+    def __init__(self, secrets):
         super().__init__()
+        self.secrets = secrets
         logger.info("Initializing AlcoEspMonitor main window.")
         self.setWindowTitle("Alco ESP Real-Time Monitor")
         self.setGeometry(100, 100, 1200, 700) # Adjusted size
@@ -631,7 +677,14 @@ class AlcoEspMonitor(QMainWindow):
     def setup_mqtt(self):
         """Creates and starts the MQTT worker thread."""
         self.mqtt_thread = QThread()
-        self.mqtt_worker = MqttWorker(broker, port, username, password, client_id, topics)
+        self.mqtt_worker = MqttWorker(
+            self.secrets["broker"],
+            self.secrets["port"],
+            self.secrets["username"],
+            self.secrets["password"],
+            client_id,
+            topics
+        )
         self.mqtt_worker.moveToThread(self.mqtt_thread)
 
         # Connect signals and slots
@@ -1013,7 +1066,8 @@ if __name__ == '__main__':
     logger.info("Application starting...")
 
     app = QApplication(sys.argv)
-    main_window = AlcoEspMonitor()
+    secrets = load_secrets_with_gui_feedback()
+    main_window = AlcoEspMonitor(secrets)
 
     # --- Graceful shutdown on Ctrl+C ---
     def sigint_handler(*args):

@@ -52,6 +52,7 @@ pyinstaller \
     --name "$APP_NAME" \
     --noconsole \
     --add-data "$SCRIPT_DIR/alarm.wav:." \
+    --add-data "$SCRIPT_DIR/secrets_template.json:." \
     --distpath "$DIST_DIR" \
     --workpath "$WORK_DIR" \
     --specpath "$BUILD_ROOT" \

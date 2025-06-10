@@ -1,4 +1,0 @@
-broker = "srv2.clusterfly.ru"
-port = 9991
-username = "user_..."
-password = "..."

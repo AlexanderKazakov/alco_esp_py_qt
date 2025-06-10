@@ -2,8 +2,49 @@ import paho.mqtt.client as mqtt
 import time
 import random
 from datetime import datetime
+import json
+import os
+import sys
 from alco_esp.alco_esp_constants import WorkState
-from alco_esp.secrets import broker, port, username, password
+
+
+# --- Secrets Management ---
+APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+SECRETS_FILE_PATH = os.path.join(APP_ROOT_DIR, "secrets.json")
+
+def load_secrets():
+    """Loads secrets from secrets.json and exits on error."""
+    if not os.path.exists(SECRETS_FILE_PATH):
+        print(f"CRITICAL: Secrets file not found: {SECRETS_FILE_PATH}")
+        print("Please copy 'secrets_template.json' to 'secrets.json' and fill in your credentials.")
+        sys.exit(1)
+
+    try:
+        with open(SECRETS_FILE_PATH, 'r', encoding='utf-8') as f:
+            secrets = json.load(f)
+
+        required_keys = ["broker", "port", "username", "password"]
+        if not all(key in secrets for key in required_keys):
+            missing_keys = [key for key in required_keys if key not in secrets]
+            print(f"CRITICAL: Secrets file {SECRETS_FILE_PATH} is missing required keys: {', '.join(missing_keys)}")
+            sys.exit(1)
+
+        print("Successfully loaded secrets from secrets.json.")
+        return secrets
+
+    except json.JSONDecodeError as e:
+        print(f"CRITICAL: Error decoding {SECRETS_FILE_PATH}: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"CRITICAL: An unexpected error occurred while loading secrets: {e}")
+        sys.exit(1)
+
+# Load secrets at startup
+secrets = load_secrets()
+broker = secrets["broker"]
+port = secrets["port"]
+username = secrets["username"]
+password = secrets["password"]
 
 
 client_id = "python_device_simulator"
