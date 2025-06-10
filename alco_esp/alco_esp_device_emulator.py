@@ -3,7 +3,7 @@ import time
 import random
 from datetime import datetime
 from alco_esp.alco_esp_constants import WorkState
-from .secrets import broker, port, username, password
+from alco_esp.secrets import broker, port, username, password
 
 
 client_id = "python_device_simulator"
