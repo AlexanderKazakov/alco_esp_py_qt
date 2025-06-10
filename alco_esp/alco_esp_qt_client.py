@@ -23,7 +23,7 @@ from alco_esp.alco_esp_constants import WORK_STATE_NAMES, WorkState
 # --- MQTT Settings (Copied from original script) ---
 client_id = "python_qt_client_viewer" # Changed client ID slightly
 # Updated topics to subscribe to based on new requirements
-topics = ["term_c", "term_k", "work"]
+topics = ["term_c", "term_k", "term_d", "work"]
 
 # Path to the directory of the script or to the Pyinstaller executable directory
 # to get the resources and to write logs to
@@ -63,6 +63,7 @@ latest_values = {key: None for key in topics}
 
 # --- Default Settings for Signal Conditions ---
 DEFAULT_T_SIGNAL_KUB = 60.0  # °C
+DEFAULT_T_SIGNAL_DEFLEGMATOR = 70.0  # °C
 DEFAULT_DELTA_T = 0.1       # °C
 DEFAULT_PERIOD_SECONDS = 60 # seconds
 
@@ -125,6 +126,13 @@ class SettingsDialog(QDialog):
         self.t_signal_kub_spinbox.setValue(current_settings.get("t_signal_kub", DEFAULT_T_SIGNAL_KUB))
         layout.addRow("T порог срабатывания по T куба (°C):", self.t_signal_kub_spinbox)
 
+        self.t_signal_deflegmator_spinbox = QDoubleSpinBox()
+        self.t_signal_deflegmator_spinbox.setRange(0.0, 100.0)
+        self.t_signal_deflegmator_spinbox.setDecimals(1)
+        self.t_signal_deflegmator_spinbox.setSingleStep(0.1)
+        self.t_signal_deflegmator_spinbox.setValue(current_settings.get("t_signal_deflegmator", DEFAULT_T_SIGNAL_DEFLEGMATOR))
+        layout.addRow("T порог срабатывания по T дефлегматора (°C):", self.t_signal_deflegmator_spinbox)
+
         self.delta_t_spinbox = QDoubleSpinBox()
         self.delta_t_spinbox.setRange(0.01, 10.0)
         self.delta_t_spinbox.setDecimals(2)
@@ -151,6 +159,7 @@ class SettingsDialog(QDialog):
     def get_settings(self):
         return {
             "t_signal_kub": self.t_signal_kub_spinbox.value(),
+            "t_signal_deflegmator": self.t_signal_deflegmator_spinbox.value(),
             "delta_t": self.delta_t_spinbox.value(),
             "period_seconds": int(self.period_spinbox.value())
         }
@@ -317,6 +326,7 @@ class AlcoEspMonitor(QMainWindow):
         # --- Initialize Settings ---
         self.settings = {
             "t_signal_kub": DEFAULT_T_SIGNAL_KUB,
+            "t_signal_deflegmator": DEFAULT_T_SIGNAL_DEFLEGMATOR,
             "delta_t": DEFAULT_DELTA_T,
             "period_seconds": DEFAULT_PERIOD_SECONDS
         }
@@ -324,6 +334,9 @@ class AlcoEspMonitor(QMainWindow):
         # --- Initialize Signal States ---
         self.t_kub_signal_monitoring_active = True
         self.t_kub_signal_triggered = False
+
+        self.t_deflegmator_signal_monitoring_active = True
+        self.t_deflegmator_signal_triggered = False
 
         self.stability_signal_monitoring_active = True
         self.stability_signal_triggered = False
@@ -554,6 +567,16 @@ class AlcoEspMonitor(QMainWindow):
         controls_grid_layout.addWidget(self.reset_t_kub_signal_button, row, 0, 1, 2)
         row += 1
 
+        self.t_deflegmator_signal_label = QLabel("T дефлегматора: Ожидание...")
+        self.t_deflegmator_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
+        self.t_deflegmator_signal_label.setAlignment(Qt.AlignCenter)
+        controls_grid_layout.addWidget(self.t_deflegmator_signal_label, row, 0, 1, 2)
+        row += 1
+        self.reset_t_deflegmator_signal_button = QPushButton("Сброс сигнала T дефлегматора")
+        self.reset_t_deflegmator_signal_button.clicked.connect(lambda: self.reset_t_deflegmator_signal())
+        controls_grid_layout.addWidget(self.reset_t_deflegmator_signal_button, row, 0, 1, 2)
+        row += 1
+
         self.stability_signal_label = QLabel("Стабильность T: Ожидание...")
         self.stability_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.stability_signal_label.setAlignment(Qt.AlignCenter)
@@ -581,27 +604,34 @@ class AlcoEspMonitor(QMainWindow):
         dialog = SettingsDialog(self, self.settings)
         # Store old settings for comparison
         old_t_signal_kub = self.settings.get("t_signal_kub")
+        old_t_signal_deflegmator = self.settings.get("t_signal_deflegmator")
         old_delta_t = self.settings.get("delta_t")
         old_period_seconds = self.settings.get("period_seconds")
 
         if dialog.exec_() == QDialog.Accepted:
             self.settings = dialog.get_settings()
-            log_msg = f"Settings updated: T_kub_sig={self.settings['t_signal_kub']}, DeltaT={self.settings['delta_t']}, Period={self.settings['period_seconds']}s"
+            log_msg = f"Settings updated: T_kub_sig={self.settings['t_signal_kub']}, T_def_sig={self.settings['t_signal_deflegmator']}, DeltaT={self.settings['delta_t']}, Period={self.settings['period_seconds']}s"
             logger.info(log_msg)
             self.update_status(log_msg) # update_status will also log this
 
             # Reset signals only if their relevant settings changed
             new_t_signal_kub = self.settings.get("t_signal_kub")
+            new_t_signal_deflegmator = self.settings.get("t_signal_deflegmator")
             new_delta_t = self.settings.get("delta_t")
             new_period_seconds = self.settings.get("period_seconds")
 
             t_kub_setting_changed = (old_t_signal_kub != new_t_signal_kub)
+            t_deflegmator_setting_changed = (old_t_signal_deflegmator != new_t_signal_deflegmator)
             stability_settings_changed = (old_delta_t != new_delta_t or
                                           old_period_seconds != new_period_seconds)
 
             if t_kub_setting_changed:
                 logger.info(f"T_signal_kub setting changed from {old_t_signal_kub} to {new_t_signal_kub}. Resetting T kub signal.")
                 self.reset_t_kub_signal(inform=False) # silent reset
+            
+            if t_deflegmator_setting_changed:
+                logger.info(f"T_signal_deflegmator setting changed from {old_t_signal_deflegmator} to {new_t_signal_deflegmator}. Resetting T deflegmator signal.")
+                self.reset_t_deflegmator_signal(inform=False) # silent reset
             
             if stability_settings_changed:
                 logger.info(f"Stability settings changed (DeltaT: {old_delta_t}->{new_delta_t}, Period: {old_period_seconds}->{new_period_seconds}). Resetting stability signal.")
@@ -666,6 +696,7 @@ class AlcoEspMonitor(QMainWindow):
         
         self.lines["term_c"], = self.ax.plot([], [], label="T царга (term_c)", marker='.', linestyle='-', color='tab:blue')
         self.lines["term_k"], = self.ax.plot([], [], label="T куб (term_k)", marker='.', linestyle='--', color='tab:red')
+        self.lines["term_d"], = self.ax.plot([], [], label="T дефлегматор (term_d)", marker='.', linestyle='-.', color='tab:green')
         self.ax.legend(loc='upper left', fontsize='small')
 
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
@@ -747,7 +778,7 @@ class AlcoEspMonitor(QMainWindow):
                         timestamps[topic].append(current_time)
                 # If it's an echo, we do nothing further with this message for 'work' topic.
 
-            elif topic in ["term_c", "term_k"]:
+            elif topic in ["term_c", "term_k", "term_d"]:
                 temp_value = float(payload_str)
                 latest_values[topic] = temp_value
                 if topic in data: # data is a global dictionary
@@ -778,7 +809,7 @@ class AlcoEspMonitor(QMainWindow):
            txt.remove()
 
         # --- Update Temperature Data ---
-        for key in ["term_c", "term_k"]:
+        for key in ["term_c", "term_k", "term_d"]:
             if key in self.lines:
                 if timestamps[key]:
                     self.lines[key].set_data(list(timestamps[key]), list(data[key])) # Ensure lists
@@ -791,13 +822,18 @@ class AlcoEspMonitor(QMainWindow):
         self.ax.autoscale_view(True, True, True)
 
         # Add/Update latest value text for temperatures
-        text_y_pos = 0.95
-        text_step = 0.08 # Adjusted step
-        temp_keys_to_display = ["term_c", "term_k"]
+        text_y_pos = 0.8
+        text_step = 0.05 # Adjusted step
+        temp_keys_to_display = ["term_c", "term_k", "term_d"]
         for key in temp_keys_to_display:
              if latest_values[key] is not None:
                  unit = "°C"
-                 label = "T царга" if key == "term_c" else "T куб"
+                 if key == "term_c":
+                     label = "T царга"
+                 elif key == "term_k":
+                     label = "T куб"
+                 elif key == "term_d":
+                     label = "T дефлегматор"
                  self.ax.text(0.01, text_y_pos, f'{label}: {latest_values[key]:.2f}{unit}',
                                   transform=self.ax.transAxes, ha='left', va='top', fontsize=8,
                                   bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
@@ -830,6 +866,7 @@ class AlcoEspMonitor(QMainWindow):
         """Checks the conditions and updates the signal labels."""
         logger.debug("Checking all signal conditions.")
         self.check_t_kub_signal()
+        self.check_t_deflegmator_signal()
         self.check_temperature_stability_signal()
 
     def check_mqtt_data_timeout(self):
@@ -881,44 +918,87 @@ class AlcoEspMonitor(QMainWindow):
         self.current_alarm_dialog = AlarmNotificationDialog(message, self.alarm_sound_effect, self)
         self.current_alarm_dialog.show()
 
+    def _check_temperature_signal(
+            self,
+            topic_key,
+            setting_key,
+            monitoring_active_attr,
+            triggered_attr,
+            label_attr,
+            reset_func,
+            name_for_log,
+            name_for_ui,
+            short_name_for_ui
+        ):
+        temp_value = latest_values.get(topic_key)
+        threshold = self.settings[setting_key]
+        monitoring_active = getattr(self, monitoring_active_attr)
+        label_widget = getattr(self, label_attr)
+        
+        logger.debug(f"Checking {name_for_log} signal: {topic_key}={temp_value}, threshold={threshold}, monitoring_active={monitoring_active}")
+
+        if monitoring_active:
+            logger.debug(f"{name_for_log} signal monitoring is active.")
+            if temp_value is not None:
+                logger.debug(f"{topic_key} is {temp_value}.")
+                if temp_value >= threshold:
+                    logger.info(f"{name_for_log} signal TRIGGERED: {topic_key} ({temp_value}) >= threshold ({threshold})")
+                    setattr(self, triggered_attr, True)
+                    setattr(self, monitoring_active_attr, False)
+                    message = f"ALERT: {name_for_ui} ({temp_value:.1f}°C) ≥ {threshold:.1f}°C"
+                    style_sheet = STYLE_ALARM_TRIGGERED
+                    self.alarm_message_with_sound(message)
+                else:
+                    logger.debug(f"{name_for_log} signal: Monitoring, condition not met ({topic_key} {temp_value} < threshold {threshold}).")
+                    message = f"Мониторинг ({short_name_for_ui} {temp_value:.1f}°C, порог {threshold:.1f}°C)"
+                    style_sheet = STYLE_MONITORING
+            else:
+                logger.debug(f"{name_for_log} signal: Waiting for {topic_key} data.")
+                message = f"{name_for_ui}: Ожидание данных (порог {threshold:.1f}°C)"
+                style_sheet = STYLE_MONITORING
+        
+        else: # Monitoring not active
+            if temp_value is not None and temp_value < threshold:
+                logger.info(f"{name_for_log} below threshold while monitoring off, resetting signal.")
+                reset_func() # This will re-evaluate and update the UI.
+                self.reset_stability_signal()
+                return # Exit to avoid overwriting the UI with stale data from this run.
+
+            logger.debug(f"{name_for_log} signal monitoring is NOT active.")
+            message = f"{name_for_ui}: Мониторинг отключен"
+            style_sheet = STYLE_INACTIVE
+            
+        logger.debug(f"{name_for_log} signal label set to: '{message}', style: '{style_sheet}'")
+        label_widget.setText(message)
+        label_widget.setStyleSheet(style_sheet)
+
     def check_t_kub_signal(self):
         """Checks the T kub signal condition and updates its label."""
-        term_k = latest_values.get("term_k")
-        t_signal_kub_threshold = self.settings["t_signal_kub"]
-        logger.debug(f"Checking T_kub signal: term_k={term_k}, threshold={t_signal_kub_threshold}, monitoring_active={self.t_kub_signal_monitoring_active}")
+        self._check_temperature_signal(
+            topic_key="term_k",
+            setting_key="t_signal_kub",
+            monitoring_active_attr="t_kub_signal_monitoring_active",
+            triggered_attr="t_kub_signal_triggered",
+            label_attr="t_kub_signal_label",
+            reset_func=self.reset_t_kub_signal,
+            name_for_log="T_kub",
+            name_for_ui="T куба",
+            short_name_for_ui="T куба",
+        )
 
-        if self.t_kub_signal_monitoring_active: # Signal is armed and monitoring
-            logger.debug("T_kub signal monitoring is active.")
-            if term_k is not None:
-                logger.debug(f"term_k is {term_k}.")
-                if term_k >= t_signal_kub_threshold: # Condition met for the first time
-                    logger.info(f"T_kub signal TRIGGERED: term_k ({term_k}) >= threshold ({t_signal_kub_threshold})")
-                    self.t_kub_signal_triggered = True
-                    self.t_kub_signal_monitoring_active = False  # Deactivate after firing (one-shot)
-                    message = f"ALERT: T куба ({term_k:.1f}°C) ≥ {t_signal_kub_threshold:.1f}°C"
-                    style_sheet = STYLE_ALARM_TRIGGERED # Moment of alarm
-                    self.alarm_message_with_sound(message)
-                else: # Monitoring, condition not met
-                    logger.debug(f"T_kub signal: Monitoring, condition not met (term_k {term_k} < threshold {t_signal_kub_threshold}).")
-                    message = f"Мониторинг (T куба {term_k:.1f}°C, порог {t_signal_kub_threshold:.1f}°C)"
-                    style_sheet = STYLE_MONITORING
-            else: # Waiting for data TODO - control and notify user about the lack of new data separately for each signal
-                logger.debug("T_kub signal: Waiting for term_k data.")
-                message = f"T куба: Ожидание данных (порог {t_signal_kub_threshold:.1f}°C)"
-                style_sheet = STYLE_MONITORING # Still monitoring, just waiting for data
-        
-        else:
-            logger.debug("T_kub signal monitoring is NOT active.")
-            message = f"T куба: Мониторинг отключен"
-            style_sheet = STYLE_INACTIVE
-            if term_k is not None and term_k < t_signal_kub_threshold:
-                logger.info("T_kub below threshold while monitoring off, resetting signals.")
-                self.reset_t_kub_signal()
-                self.reset_stability_signal()
-
-        logger.debug(f"T_kub signal label set to: '{message}', style: '{style_sheet}'")
-        self.t_kub_signal_label.setText(message)
-        self.t_kub_signal_label.setStyleSheet(style_sheet)
+    def check_t_deflegmator_signal(self):
+        """Checks the T deflegmator signal condition and updates its label."""
+        self._check_temperature_signal(
+            topic_key="term_d",
+            setting_key="t_signal_deflegmator",
+            monitoring_active_attr="t_deflegmator_signal_monitoring_active",
+            triggered_attr="t_deflegmator_signal_triggered",
+            label_attr="t_deflegmator_signal_label",
+            reset_func=self.reset_t_deflegmator_signal,
+            name_for_log="T_deflegmator",
+            name_for_ui="T дефлегматора",
+            short_name_for_ui="T дефл.",
+        )
 
     def check_temperature_stability_signal(self):
         """Checks the temperature stability signal condition and updates its label."""
@@ -977,6 +1057,14 @@ class AlcoEspMonitor(QMainWindow):
         self.t_kub_signal_monitoring_active = True
         self.t_kub_signal_triggered = False
         log_msg = "Сигнал T куба сброшен и активирован."
+        logger.info(log_msg)
+        if inform: self.update_status(log_msg)
+        self.check_signal_conditions() # Re-evaluate immediately
+
+    def reset_t_deflegmator_signal(self, inform=True):
+        self.t_deflegmator_signal_monitoring_active = True
+        self.t_deflegmator_signal_triggered = False
+        log_msg = "Сигнал T дефлегматора сброшен и активирован."
         logger.info(log_msg)
         if inform: self.update_status(log_msg)
         self.check_signal_conditions() # Re-evaluate immediately

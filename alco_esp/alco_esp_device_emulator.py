@@ -53,8 +53,9 @@ topic_prefix = f"{username}/"
 
 # Начальные значения параметров устройства
 device_state = {
-    "term_c": 58.0,        # Температура в царге (начальная комнатная)
-    "term_k": 59.0,        # Температура в кубе (начальная комнатная)
+    "term_c": 58.0,        # Температура в царге
+    "term_k": 59.0,        # Температура в кубе
+    "term_d": 58.5,        # Температура в дефлегматоре
     "term_c_max": 78.8,    # Температура старт-стопа (для отбора тела)
     "term_c_min": 78.2,    # Температура возобновления отбора (для отбора тела)
     "otbor_g_1": 15,       # ШИМ отбора для голов покапельно (примерное значение)
@@ -204,6 +205,37 @@ def simulate_device_changes():
         term_c_change = random.uniform(-0.1, 0.1)
 
     device_state["term_c"] += term_c_change
+
+    # ============
+    # Имитация изменения term_d (температура в дефлегматоре)
+    # term_d обычно немного ниже term_c, так как дефлегматор охлаждает пар для создания флегмы.
+
+    if current_work_mode == WorkState.RAZGON.value:
+        # term_d растет, следуя за term_c, но с небольшим отставанием
+        if device_state["term_c"] > device_state["term_d"]:
+            term_d_change = (device_state["term_c"] - device_state["term_d"]) * 0.8
+        else: # Если вдруг обогнала, колеблется
+            term_d_change = random.uniform(-0.1, 0.1)
+
+    elif current_work_mode == WorkState.OTBOR_GOLOV_POKAPELNO.value or current_work_mode == WorkState.OTBOR_TELA.value:
+        # При отборе дефлегматор активно поддерживает температуру для стабильного возврата флегмы.
+        # Она должна быть очень стабильной и чуть ниже царги.
+        target_d_temp = device_state["term_c"] - random.uniform(0.3, 0.8) # Цель - немного холоднее царги
+        # Медленно движется к цели
+        diff = target_d_temp - device_state["term_d"]
+        term_d_change = diff * 0.4 # Плавное приближение + колебания
+
+    elif current_work_mode == WorkState.STOP.value or current_work_mode == WorkState.OTBOR_VYKLUCHEN.value:
+        # Медленное остывание вместе с царгой
+        if device_state["term_c"] < device_state["term_d"] - 0.5 and device_state["term_d"] > 18:
+            term_d_change = random.uniform(-0.15, -0.05)
+        else:
+            term_d_change = random.uniform(-0.1, 0.05)
+            
+    else: # Другие режимы
+        term_d_change = random.uniform(-0.1, 0.1)
+
+    device_state["term_d"] += term_d_change
 
 
 # Создаем клиент
