@@ -694,9 +694,15 @@ class AlcoEspMonitor(QMainWindow):
         self.ax.set_title("Температуры")
         self.ax.set_ylabel("°C")
         
-        self.lines["term_c"], = self.ax.plot([], [], label="T царга (term_c)", marker='.', linestyle='-', color='tab:blue')
-        self.lines["term_k"], = self.ax.plot([], [], label="T куб (term_k)", marker='.', linestyle='--', color='tab:red')
-        self.lines["term_d"], = self.ax.plot([], [], label="T дефлегматор (term_d)", marker='.', linestyle='-.', color='tab:green')
+        self.base_line_labels = {
+            "term_c": "T царга (term_c)",
+            "term_k": "T куб (term_k)",
+            "term_d": "T дефлегматор (term_d)",
+        }
+
+        self.lines["term_c"], = self.ax.plot([], [], label=self.base_line_labels["term_c"], marker='.', linestyle='-', color='tab:blue')
+        self.lines["term_k"], = self.ax.plot([], [], label=self.base_line_labels["term_k"], marker='.', linestyle='--', color='tab:red')
+        self.lines["term_d"], = self.ax.plot([], [], label=self.base_line_labels["term_d"], marker='.', linestyle='-.', color='tab:green')
         self.ax.legend(loc='upper left', fontsize='small')
 
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
@@ -805,10 +811,7 @@ class AlcoEspMonitor(QMainWindow):
 
     def update_plots(self):
         """Updates the Matplotlib plots with the latest data."""
-        for txt in self.ax.texts: # Clear previous text annotations
-           txt.remove()
-
-        # --- Update Temperature Data ---
+        # --- Update Temperature Data and legend ---
         for key in ["term_c", "term_k", "term_d"]:
             if key in self.lines:
                 if timestamps[key]:
@@ -817,27 +820,15 @@ class AlcoEspMonitor(QMainWindow):
                 else:
                     self.lines[key].set_data([], [])
                     self.lines[key].set_visible(False)
+                
+                # Update the label for the legend
+                base_label = self.base_line_labels.get(key, key)
+                value_str = f": {latest_values[key]:.2f}°C" if latest_values[key] is not None else ""
+                self.lines[key].set_label(f"{base_label}{value_str}")
 
         self.ax.relim()
         self.ax.autoscale_view(True, True, True)
-
-        # Add/Update latest value text for temperatures
-        text_y_pos = 0.8
-        text_step = 0.05 # Adjusted step
-        temp_keys_to_display = ["term_c", "term_k", "term_d"]
-        for key in temp_keys_to_display:
-             if latest_values[key] is not None:
-                 unit = "°C"
-                 if key == "term_c":
-                     label = "T царга"
-                 elif key == "term_k":
-                     label = "T куб"
-                 elif key == "term_d":
-                     label = "T дефлегматор"
-                 self.ax.text(0.01, text_y_pos, f'{label}: {latest_values[key]:.2f}{unit}',
-                                  transform=self.ax.transAxes, ha='left', va='top', fontsize=8,
-                                  bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
-                 text_y_pos -= text_step
+        self.ax.legend(loc='upper left')
 
         # Adjust x-axis limits based on the actual time range present in the data
         all_times = [t for topic_times in timestamps.values() for t in topic_times if topic_times] # Filter empty
