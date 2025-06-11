@@ -1169,7 +1169,7 @@ def setup_data_logging():
         mode='a',
         maxBytes=100 * 1024 * 1024,
         backupCount=5,
-        encoding='utf-8',
+        encoding='utf-8-sig',
         header=csv_header
     )
 
