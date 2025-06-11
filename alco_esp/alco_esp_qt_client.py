@@ -504,7 +504,7 @@ class AlcoEspMonitor(QMainWindow):
         
         # Display current work mode
         controls_grid_layout.addWidget(QLabel("Текущий режим (work):"), row, 0)
-        self.current_work_mode_label = QLabel("N/A")
+        self.current_work_mode_label = QLabel("Нет данных")
         self.current_work_mode_label.setStyleSheet("font-weight: bold;")
         controls_grid_layout.addWidget(self.current_work_mode_label, row, 1)
         row += 1
@@ -708,9 +708,9 @@ class AlcoEspMonitor(QMainWindow):
             "term_d": "T дефлегматор (term_d)",
         }
 
-        self.lines["term_d"], = self.ax.plot([], [], label=self.base_line_labels["term_d"], marker='.', linestyle='-.', color='tab:green')
+        self.lines["term_d"], = self.ax.plot([], [], label=self.base_line_labels["term_d"], marker='.', linestyle='-', color='tab:green')
         self.lines["term_c"], = self.ax.plot([], [], label=self.base_line_labels["term_c"], marker='.', linestyle='-', color='tab:blue')
-        self.lines["term_k"], = self.ax.plot([], [], label=self.base_line_labels["term_k"], marker='.', linestyle='--', color='tab:red')
+        self.lines["term_k"], = self.ax.plot([], [], label=self.base_line_labels["term_k"], marker='.', linestyle='-', color='tab:red')
         self.ax.legend(loc='upper left', fontsize='small')
 
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
