@@ -84,13 +84,13 @@ def load_secrets_with_gui_feedback():
     """
     if not os.path.exists(SECRETS_FILE_PATH):
         template_path = os.path.join(APP_ROOT_DIR, "secrets_template.json")
-        msg = f"Secrets file not found: {SECRETS_FILE_PATH}\n\n"
+        msg = f"Файл с секретами не найден: {SECRETS_FILE_PATH}\n\n"
         if os.path.exists(template_path):
-            msg += "Please copy 'secrets_template.json' to 'secrets.json' and fill in your credentials."
+            msg += "Пожалуйста, скопируйте 'secrets_template.json' в 'secrets.json' и укажите ваши данные."
         else:
-            msg += "The template 'secrets_template.json' is also missing. Cannot continue."
+            msg += "Шаблон 'secrets_template.json' также отсутствует. Продолжение невозможно."
         logger.critical(msg)
-        QMessageBox.critical(None, "Configuration Error", msg)
+        QMessageBox.critical(None, "Ошибка конфигурации", msg)
         sys.exit(1)
 
     try:
@@ -100,9 +100,9 @@ def load_secrets_with_gui_feedback():
         required_keys = ["broker", "port", "username", "password"]
         if not all(key in secrets for key in required_keys):
             missing_keys = [key for key in required_keys if key not in secrets]
-            msg = f"Secrets file {SECRETS_FILE_PATH} is missing required keys: {', '.join(missing_keys)}"
+            msg = f"В файле секретов {SECRETS_FILE_PATH} отсутствуют необходимые ключи: {', '.join(missing_keys)}"
             logger.critical(msg)
-            QMessageBox.critical(None, "Configuration Error", msg)
+            QMessageBox.critical(None, "Ошибка конфигурации", msg)
             sys.exit(1)
 
         logger.info("Successfully loaded secrets from secrets.json.")
@@ -111,12 +111,12 @@ def load_secrets_with_gui_feedback():
     except json.JSONDecodeError as e:
         msg = f"Error decoding {SECRETS_FILE_PATH}: {e}"
         logger.critical(msg, exc_info=True)
-        QMessageBox.critical(None, "Configuration Error", f"Error parsing secrets.json. Is it valid JSON?\n\n{e}")
+        QMessageBox.critical(None, "Ошибка конфигурации", f"Ошибка чтения secrets.json. Является ли он корректным JSON?\n\n{e}")
         sys.exit(1)
     except Exception as e:
         msg = f"An unexpected error occurred while loading secrets: {e}"
         logger.critical(msg, exc_info=True)
-        QMessageBox.critical(None, "Configuration Error", msg)
+        QMessageBox.critical(None, "Ошибка конфигурации", msg)
         sys.exit(1)
 
 
@@ -177,7 +177,7 @@ class SettingsDialog(QDialog):
 class AlarmNotificationDialog(QDialog):
     def __init__(self, message, sound_effect, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ALARM!")
+        self.setWindowTitle("ВНИМАНИЕ!")
         self.setModal(True)
         self.sound_effect = sound_effect # Store the sound effect instance
 
@@ -189,7 +189,7 @@ class AlarmNotificationDialog(QDialog):
         self.message_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.message_label)
 
-        self.ok_button = QPushButton("Dismiss")
+        self.ok_button = QPushButton("Сбросить")
         self.ok_button.clicked.connect(self.accept) # accept() will close the dialog
         layout.addWidget(self.ok_button)
 
@@ -236,7 +236,7 @@ class MqttWorker(QObject):
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
-            log_msg = f"Connected to MQTT Broker: {self.broker}"
+            log_msg = f"Подключено к MQTT брокеру: {self.broker}"
             logger.info(log_msg)
             self.connectionStatus.emit(log_msg)
             for key in self.topics_to_subscribe:
@@ -244,7 +244,7 @@ class MqttWorker(QObject):
                 client.subscribe(topic_to_sub)
                 logger.info(f"Subscribed to: {topic_to_sub}")
         else:
-            log_msg = f"Connection failed with code {rc}"
+            log_msg = f"Ошибка подключения, код {rc}"
             logger.error(log_msg)
             self.connectionStatus.emit(log_msg)
 
@@ -255,13 +255,13 @@ class MqttWorker(QObject):
         self.messageReceived.emit(topic, payload)
 
     def on_disconnect(self, client, userdata, rc):
-         log_msg = f"Disconnected from MQTT Broker (rc={rc})"
+         log_msg = f"Отключено от MQTT брокера (rc={rc})"
          logger.warning(log_msg) # Using warning for disconnect
          self.connectionStatus.emit(log_msg)
          if rc != 0:
              # Paho's loop_start() handles reconnection attempts automatically.
              logger.warning("Unexpected disconnection. Paho-MQTT will attempt to reconnect.")
-             self.connectionStatus.emit("Unexpected disconnection. Attempting to reconnect...")
+             self.connectionStatus.emit("Неожиданное отключение. Попытка переподключения...")
 
     def run(self):
         """
@@ -274,7 +274,7 @@ class MqttWorker(QObject):
         self.client.on_disconnect = self.on_disconnect
 
         try:
-            self.connectionStatus.emit(f"Connecting to {self.broker}...")
+            self.connectionStatus.emit(f"Подключение к {self.broker}...")
             logger.info(f"MqttWorker: Attempting to connect to {self.broker}:{self.port}")
             self.client.connect(self.broker, self.port, 60)
             self.client.loop_start() # Start network loop in background thread and return
@@ -283,7 +283,7 @@ class MqttWorker(QObject):
             # allowing it to process signals/slots like publish_message.
         except Exception as e:
             logger.error(f"MqttWorker: MQTT connection error: {e}", exc_info=True)
-            self.connectionStatus.emit(f"MQTT connection error: {e}")
+            self.connectionStatus.emit(f"Ошибка подключения MQTT: {e}")
             # If connection fails, we should signal finished maybe?
             # Or attempt reconnect later? For now, emit finished.
             self.finished.emit() # Emit finished if connection fails immediately
@@ -302,22 +302,22 @@ class MqttWorker(QObject):
             full_topic = self.topic_prefix + topic_suffix
             try:
                 # Add status update before publishing
-                self.connectionStatus.emit(f"Publishing: {topic_suffix} = {payload}")
+                self.connectionStatus.emit(f"Публикация: {topic_suffix} = {payload}")
                 logger.info(f"Attempting to publish: Topic='{full_topic}', Payload='{payload}'")
                 rc, mid = self.client.publish(full_topic, payload=payload, qos=1) # Use QoS 1 for reliability
                 if rc == mqtt.MQTT_ERR_SUCCESS:
                     logger.info(f"Successfully published: Topic='{full_topic}', Payload='{payload}', MID={mid}")
                     # Add status update on success
-                    self.connectionStatus.emit(f"Published: {topic_suffix} = {payload}")
+                    self.connectionStatus.emit(f"Опубликовано: {topic_suffix} = {payload}")
                 else:
                     logger.error(f"Failed to publish to {full_topic}, return code: {rc}")
-                    self.connectionStatus.emit(f"Publish failed: {topic_suffix} (code {rc})")
+                    self.connectionStatus.emit(f"Ошибка публикации: {topic_suffix} (код {rc})")
             except Exception as e:
                 logger.error(f"Error publishing message to {full_topic}: {e}", exc_info=True)
-                self.connectionStatus.emit(f"Publish error: {topic_suffix}: {e}")
+                self.connectionStatus.emit(f"Ошибка публикации: {topic_suffix}: {e}")
         else:
             logger.warning("Cannot publish, MQTT client not connected.")
-            self.connectionStatus.emit("Publish failed: Not connected")
+            self.connectionStatus.emit("Ошибка публикации: нет подключения")
 
 
 # --- Main Application Window ---
@@ -384,7 +384,7 @@ class AlcoEspMonitor(QMainWindow):
         self.plot_layout = QVBoxLayout(self.plot_widget)
         self.main_layout.addWidget(self.plot_widget, 1)
 
-        self.status_label = QLabel("Connecting...")
+        self.status_label = QLabel("Подключение...")
         self.plot_layout.addWidget(self.status_label)
 
         plt.style.use('seaborn-v0_8-darkgrid')
@@ -412,9 +412,8 @@ class AlcoEspMonitor(QMainWindow):
         """Initializes the sound effect and sets up status checking."""
         logger.info("Initializing sound and alarm system.")
         if not os.path.exists(ALARM_FILE_PATH):
-            warning_msg = (f"CRITICAL: Alarm sound file NOT FOUND:\n"
-                           f"{os.path.abspath(ALARM_FILE_PATH)}\n\n"
-                           f"Alarms will attempt to use a system beep.")
+            warning_msg = (f"КРИТИЧЕСКАЯ ОШИБКА: Файл звукового сигнала НЕ НАЙДЕН:\n"
+                           f"{os.path.abspath(ALARM_FILE_PATH)}")
             logger.critical(warning_msg)
             # Show this critical error immediately
             self.alarm_message_with_sound(warning_msg) # This will also log the alarm
@@ -455,10 +454,9 @@ class AlcoEspMonitor(QMainWindow):
             # Optionally disconnect if you only care about the very first successful load notification
             # self.alarm_sound_effect.statusChanged.disconnect(self._on_alarm_sound_status_changed)
         elif status == QSoundEffect.Error:
-            error_msg = (f"ERROR: Failed to load alarm sound file:\n"
+            error_msg = (f"ОШИБКА: Не удалось загрузить файл звукового сигнала:\n"
                          f"{os.path.abspath(ALARM_FILE_PATH)}\n\n"
-                         f"The file might be corrupted or in an unsupported format. "
-                         f"Alarms will attempt to use a system beep.")
+                         f"Файл может быть поврежден или иметь неподдерживаемый формат. ")
             logger.error(error_msg)
             self.alarm_message_with_sound(error_msg) # Show user the problem, will also log
             self._alarm_sound_initial_load_reported = True
@@ -517,9 +515,9 @@ class AlcoEspMonitor(QMainWindow):
         # --- Otbor Golov Speed Control ---
         controls_grid_layout.addWidget(QLabel("<b>Отбор голов покапельно:</b>"), row, 0, 1, 2)
         row += 1
-        controls_grid_layout.addWidget(QLabel("Скорость (ШИМ):"), row, 0)
+        controls_grid_layout.addWidget(QLabel("Скорость (ШИМ, %):"), row, 0)
         self.otbor_g_1_spinbox = QDoubleSpinBox()
-        self.otbor_g_1_spinbox.setRange(0, 255) # Assuming PWM range
+        self.otbor_g_1_spinbox.setRange(0, 100) # PWM in %
         self.otbor_g_1_spinbox.setDecimals(0)
         controls_grid_layout.addWidget(self.otbor_g_1_spinbox, row, 1)
         row += 1
@@ -548,9 +546,9 @@ class AlcoEspMonitor(QMainWindow):
         self.term_c_min_telo_spinbox.setSingleStep(0.1)
         controls_grid_layout.addWidget(self.term_c_min_telo_spinbox, row, 1)
         row += 1
-        controls_grid_layout.addWidget(QLabel("ШИМ отбора тела:"), row, 0)
+        controls_grid_layout.addWidget(QLabel("ШИМ отбора тела (%):"), row, 0)
         self.otbor_t_spinbox = QDoubleSpinBox()
-        self.otbor_t_spinbox.setRange(0, 255) # Assuming PWM range
+        self.otbor_t_spinbox.setRange(0, 100) # PWM in %
         self.otbor_t_spinbox.setDecimals(0)
         controls_grid_layout.addWidget(self.otbor_t_spinbox, row, 1)
         row += 1
@@ -710,9 +708,9 @@ class AlcoEspMonitor(QMainWindow):
             "term_d": "T дефлегматор (term_d)",
         }
 
+        self.lines["term_d"], = self.ax.plot([], [], label=self.base_line_labels["term_d"], marker='.', linestyle='-.', color='tab:green')
         self.lines["term_c"], = self.ax.plot([], [], label=self.base_line_labels["term_c"], marker='.', linestyle='-', color='tab:blue')
         self.lines["term_k"], = self.ax.plot([], [], label=self.base_line_labels["term_k"], marker='.', linestyle='--', color='tab:red')
-        self.lines["term_d"], = self.ax.plot([], [], label=self.base_line_labels["term_d"], marker='.', linestyle='-.', color='tab:green')
         self.ax.legend(loc='upper left', fontsize='small')
 
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
@@ -905,7 +903,7 @@ class AlcoEspMonitor(QMainWindow):
                 if self.mqtt_thread and self.mqtt_thread.isRunning(): # and self.mqtt_worker and self.mqtt_worker.client and self.mqtt_worker.client.is_connected(): # More precise check?
                     logger.warning(f"No MQTT data for {time_since_last_message:.0f} seconds. Triggering 'no data' alarm.")
                     self.alarm_message_with_sound(
-                        f"No information from device for {time_since_last_message / 60:.1f} minutes, check the device or the connection"
+                        f"Нет данных от устройства в течение {time_since_last_message / 60:.1f} мин., проверьте устройство или соединение"
                     )
                     self.mqtt_data_timeout_alarm_active = True # Set flag to prevent re-alarming immediately
                 else:
@@ -913,7 +911,7 @@ class AlcoEspMonitor(QMainWindow):
 
     def alarm_message_with_sound(self, message):
         """Displays a non-modal alarm message window and optionally plays a sound."""
-        logger.warning(f"ALARM TRIGGERED: {message}") # Log to console (and file)
+        logger.warning(f"ВНИМАНИЕ: {message}") # Log to console (and file)
 
         # If an old alarm dialog exists, handle its sound and closure first.
         if self.current_alarm_dialog:
@@ -969,7 +967,7 @@ class AlcoEspMonitor(QMainWindow):
                     logger.info(f"{name_for_log} signal TRIGGERED: {topic_key} ({temp_value}) >= threshold ({threshold})")
                     setattr(self, triggered_attr, True)
                     setattr(self, monitoring_active_attr, False)
-                    message = f"ALERT: {name_for_ui} ({temp_value:.1f}°C) ≥ {threshold:.1f}°C"
+                    message = f"ВНИМАНИЕ: {name_for_ui} ({temp_value:.1f}°C) ≥ {threshold:.1f}°C"
                     style_sheet = STYLE_ALARM_TRIGGERED
                     self.alarm_message_with_sound(message)
                 else:
@@ -1047,7 +1045,7 @@ class AlcoEspMonitor(QMainWindow):
                         logger.info(f"Stability signal TRIGGERED: Delta stable for {elapsed_seconds:.0f}s (>= {period_seconds_threshold}s).")
                         self.stability_signal_triggered = True
                         self.stability_signal_monitoring_active = False  # Deactivate after achieving (one-shot)
-                        message = f"ALERT: СТАБИЛЬНО ДОЛЬШЕ УКАЗАННОГО ВРЕМЕНИ: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C в течение {elapsed_seconds:.0f}с"
+                        message = f"ВНИМАНИЕ: СТАБИЛЬНО: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C в течение {elapsed_seconds:.0f}с"
                         style_sheet = STYLE_ALARM_TRIGGERED
                         self.alarm_message_with_sound(message)
                     else: # Delta met, timer running
