@@ -858,25 +858,35 @@ class AlcoEspMonitor(QMainWindow):
                 self.lines[key].set_label(f"{base_label}{value_str}")
 
         self.ax.relim()
-        self.ax.autoscale_view(True, True, False)
+
+        # Only autoscale the x-axis if the user hasn't zoomed or panned.
+        # User interaction with zoom/pan tools turns autoscaling off for that axis.
+        # The 'Home' button on the toolbar will re-enable it, and this logic will
+        # then take over again.
+        if self.ax.get_autoscalex_on():
+            self.ax.autoscale_view(scalex=True, scaley=False) # autoscale X, but not Y
+
+            # Adjust x-axis limits based on the actual time range present in the data
+            all_times = [t for topic_times in timestamps.values() for t in topic_times if topic_times] # Filter empty
+            if all_times:
+                min_time = min(all_times)
+                max_time = max(all_times)
+                # Add a small buffer to max_time if only one point, or if window is small
+                if min_time == max_time:
+                    max_time = min_time + timedelta(seconds=10) # Show a 10s window for single point
+
+                self.ax.set_xlim(min_time, max_time)
+                self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+                self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=7)) # Fewer ticks
+                self.ax.tick_params(axis='x', rotation=30)
+            else: # No data yet, set a default view
+                now = datetime.now()
+                self.ax.set_xlim(now - timedelta(seconds=60), now)
+
+            # set_xlim turns autoscale off, so we re-enable it to remember we are in auto mode.
+            self.ax.set_autoscalex_on(True)
+
         self.ax.legend(loc='upper left')
-
-        # Adjust x-axis limits based on the actual time range present in the data
-        all_times = [t for topic_times in timestamps.values() for t in topic_times if topic_times] # Filter empty
-        if all_times:
-            min_time = min(all_times)
-            max_time = max(all_times)
-            # Add a small buffer to max_time if only one point, or if window is small
-            if min_time == max_time:
-                max_time = min_time + timedelta(seconds=10) # Show a 10s window for single point
-
-            self.ax.set_xlim(min_time, max_time)
-            self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=7)) # Fewer ticks
-            self.ax.tick_params(axis='x', rotation=30)
-        else: # No data yet, set a default view
-            now = datetime.now()
-            self.ax.set_xlim(now - timedelta(seconds=60), now)
 
         try:
             self.figure.tight_layout(rect=[0, 0.03, 1, 0.95])
