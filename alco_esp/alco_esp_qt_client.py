@@ -1037,6 +1037,7 @@ class AlcoEspMonitor(QMainWindow):
         term_c = latest_values.get("term_c")
         delta_t_threshold = self.settings["delta_t"]
         period_seconds_threshold = self.settings["period_seconds"]
+        TERM_K_70 = 70.0
         logger.debug(f"Checking stability signal: term_k={term_k}, term_c={term_c}, delta_thresh={delta_t_threshold}, period_thresh={period_seconds_threshold}s, monitoring_active={self.stability_signal_monitoring_active}")
 
         if self.stability_signal_monitoring_active: # Signal is armed and monitoring
@@ -1044,29 +1045,36 @@ class AlcoEspMonitor(QMainWindow):
             if term_k is not None and term_c is not None:
                 delta = abs(term_k - term_c)
                 logger.debug(f"Stability signal: term_k={term_k}, term_c={term_c}, calculated_delta={delta:.2f}")
-                if delta < delta_t_threshold: # Delta condition met
-                    logger.debug(f"Stability signal: Delta condition met (delta {delta:.2f} < threshold {delta_t_threshold:.2f}).")
+
+                is_stable_condition = (delta < delta_t_threshold) and (term_k > TERM_K_70)
+
+                if is_stable_condition: # Stability condition met
+                    logger.debug(f"Stability signal: Condition met (delta {delta:.2f} < threshold {delta_t_threshold:.2f} AND T_kub {term_k} > {TERM_K_70}).")
                     if self.stability_condition_met_since is None:
-                        logger.info("Stability signal: Delta condition met for the first time, starting timer.")
+                        logger.info("Stability signal: Condition met for the first time, starting timer.")
                         self.stability_condition_met_since = datetime.now()
                     elapsed_seconds = (datetime.now() - self.stability_condition_met_since).total_seconds()
-                    logger.debug(f"Stability signal: Time elapsed since delta condition met: {elapsed_seconds:.0f}s.")
+                    logger.debug(f"Stability signal: Time elapsed since condition met: {elapsed_seconds:.0f}s.")
                     if elapsed_seconds >= period_seconds_threshold: # Time condition also met - stability achieved
-                        logger.info(f"Stability signal TRIGGERED: Delta stable for {elapsed_seconds:.0f}s (>= {period_seconds_threshold}s).")
+                        logger.info(f"Stability signal TRIGGERED: Stable for {elapsed_seconds:.0f}s (>= {period_seconds_threshold}s).")
                         self.stability_signal_triggered = True
                         self.stability_signal_monitoring_active = False  # Deactivate after achieving (one-shot)
-                        message = f"ВНИМАНИЕ: СТАБИЛЬНО: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C в течение {elapsed_seconds:.0f}с"
+                        message = f"ВНИМАНИЕ: СТАБИЛЬНО: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C и Tк > {TERM_K_70:.0f}°C в течение {elapsed_seconds:.0f}с"
                         style_sheet = STYLE_ALARM_TRIGGERED
                         self.alarm_message_with_sound(message)
-                    else: # Delta met, timer running
-                        logger.debug("Stability signal: Delta condition met, timer running.")
-                        message = f"Стабильно: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C в течение {elapsed_seconds:.0f}с"
+                    else: # Stability condition met, timer running
+                        logger.debug("Stability signal: Condition met, timer running.")
+                        message = f"Стабильно: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C и Tк > {TERM_K_70:.0f}°C в течение {elapsed_seconds:.0f}с"
                         style_sheet = STYLE_MONITORING
-                else:  # Delta condition NOT met, reset timer
+                else:  # Stability condition NOT met, reset timer
                     if self.stability_condition_met_since is not None: # Log only if timer was running
-                        logger.info("Stability signal: Delta condition no longer met, resetting timer.")
+                        logger.info("Stability signal: Condition no longer met, resetting timer.")
                     self.stability_condition_met_since = None
-                    message = f"ΔT: Мониторинг (ΔT={delta:.2f}°C, порог ΔT < {delta_t_threshold:.2f}°C)"
+
+                    if term_k <= TERM_K_70:
+                        message = f"ΔT: Мониторинг (Tк={term_k:.1f}°C ≤ {TERM_K_70:.0f}°C)"
+                    else: # delta condition failed
+                        message = f"ΔT: Мониторинг (ΔT={delta:.2f}°C, порог ΔT < {delta_t_threshold:.2f}°C)"
                     style_sheet = STYLE_MONITORING
             else:  # Not enough data (term_k or term_c is None)
                 logger.debug("Stability signal: Waiting for term_k and/or term_c data.")
