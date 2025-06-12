@@ -779,21 +779,29 @@ class AlcoEspMonitor(QMainWindow):
             # This flag prevents re-triggering the alarm logic.
 
         current_time = datetime.now()
+        value = None
 
         try:
             if topic in topics_to_subscribe_to:
-                value = float(payload_str)
-                latest_values[topic] = value
-                if topic in data: # data is a global dictionary
-                    data[topic].append(value)
-                    timestamps[topic].append(current_time)
+                # Handle string-based topics first
+                if topic == "flag_otb":
+                    value = payload_str  # Keep it as a string
+                    latest_values[topic] = value
+                    # Note: We don't add string values to the numerical `data` deques for plotting.
+                else:
+                    # For all other topics, attempt to convert to float
+                    value = float(payload_str)
+                    latest_values[topic] = value
+                    if topic in data:  # data is a dictionary of deques for plotting
+                        data[topic].append(value)
+                        timestamps[topic].append(current_time)
 
-                # --- CSV Logging for temperature topics ---
+                # --- CSV Logging for all subscribed topics ---
                 try:
                     time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
                     values = [''] * len(CSV_DATA_TOPIC_ORDER)
                     idx = CSV_DATA_TOPIC_ORDER.index(topic)
-                    values[idx] = str(value)
+                    values[idx] = str(value)  # value is either string or float, str() handles both
                     log_line = f"{time_str};" + ";".join(values)
                     data_logger.info(log_line)
                 except Exception as e:

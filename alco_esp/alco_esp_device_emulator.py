@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 import os
 import sys
-from alco_esp_constants import WorkState
+from alco_esp_constants import WorkState, WORK_STATE_NAMES
 
 
 # --- Secrets Management ---
@@ -53,14 +53,38 @@ topic_prefix = f"{username}/"
 
 # Начальные значения параметров устройства
 device_state = {
+    # Read-Only Status
     "term_c": 58.0,        # Температура в царге
     "term_k": 59.0,        # Температура в кубе
     "term_d": 58.5,        # Температура в дефлегматоре
+    "power": 0.0,          # Измеренная мощность
+    "press_a": 760.0,      # Атмосферное давление
+    "flag_otb": WORK_STATE_NAMES[WorkState.STOP.value], # Режим работы (публикуемый)
+    "term_v": 0.0,
+    "term_vent": 30.0,
+    "count_vent": 0,
+    "num_error": 0,
+
+    # Commandable States (Read part)
     "term_c_max": 78.8,    # Температура старт-стопа (для отбора тела)
     "term_c_min": 78.2,    # Температура возобновления отбора (для отбора тела)
-    "otbor_g_1": 15,       # ШИМ отбора для голов покапельно (примерное значение)
-    "otbor_t": 35,         # ШИМ отбора для тела (примерное значение)
-    "work": WorkState.STOP.value # Текущий режим работы (0 - стоп)
+    "otbor_g_1": 15,       # ШИМ отбора для голов покапельно
+    "otbor_t": 35,         # ШИМ отбора для тела
+    "term_d_m": 95.0,      # Аварийная температура в дефлегматоре
+    "press_c_m": 800.0,    # Аварийное давление в кубе
+    "term_k_m": 100.0,     # Максимальная температура в кубе
+    "term_nasos": 50.0,    # Температура включения клапана на воду
+    "power_m": 2000.0,     # Стабилизируемая мощность
+    "otbor": 0,            # ШИМ отбора (текущий)
+    "time_stop": 300,      # Максимальное время старт-стопа
+    "otbor_minus": 1,      # Декремент отбора тела
+    "min_otb": 60,         # Период при отборе голов
+    "sek_otb": 2,          # Время открытого клапана при отборе голов
+    "otbor_g_2": 10,       # ШИМ отбора для подголовников
+    "delta_t": 0.5,        # Разница температуры для старт-стопа
+
+    # Internal state, not published
+    "work": WorkState.STOP.value
 }
 
 
@@ -69,11 +93,16 @@ def on_connect(client, userdata, flags, rc):
     print(f"on_connect: Подключено с кодом результата {rc}")
     
     # Подписываемся на топики для получения команд
-    client.subscribe(topic_prefix + "term_c_max_new")
-    client.subscribe(topic_prefix + "term_c_min_new")
-    client.subscribe(topic_prefix + "otbor_g_1_new")
-    client.subscribe(topic_prefix + "otbor_t_new")
     client.subscribe(topic_prefix + "work")
+
+    # Subscribe to all commandable topics (_new suffix)
+    commandable_topics = [
+        "term_d_m", "press_c_m", "term_c_max", "term_c_min", "term_k_m",
+        "term_nasos", "power_m", "otbor", "time_stop", "otbor_minus",
+        "min_otb", "sek_otb", "otbor_g_1", "otbor_g_2", "otbor_t", "delta_t"
+    ]
+    for topic in commandable_topics:
+        client.subscribe(f"{topic_prefix}{topic}_new")
 
 
 # Функция при получении сообщения
@@ -92,9 +121,8 @@ def on_message(client, userdata, msg):
             if device_state["work"] != requested_work_mode:
                 print(f"on_message: Получена команда ИЗМЕНИТЬ режим работы на: {requested_work_mode}")
                 device_state["work"] = requested_work_mode
-                print(f"on_message: Режим работы изменен на: {device_state['work']}")
-                # Optionally, immediately publish the updated status after a command confirmation
-                # client.publish(topic_prefix + "work", str(device_state["work"]))
+                device_state["flag_otb"] = WORK_STATE_NAMES.get(requested_work_mode, f"Unknown({requested_work_mode})") # Sync flag_otb
+                print(f"on_message: Режим работы изменен на: {device_state['work']}, Флаг отбора: '{device_state['flag_otb']}'")
             else:
                 # Message received, but it matches the current state. Ignore it (or log for debugging).
                 # print(f"on_message: Режим работы уже {requested_work_mode}. Команда проигнорирована.")
@@ -135,6 +163,30 @@ def on_message(client, userdata, msg):
 def simulate_device_changes():
     current_work_mode = device_state["work"]
 
+    # --- Simulate dynamic parameters based on work mode ---
+    
+    # Simulate power
+    if current_work_mode == WorkState.RAZGON.value:
+        device_state["power"] = device_state["power_m"] + random.uniform(-50, 50)
+    elif current_work_mode == WorkState.OTBOR_TELA.value or current_work_mode == WorkState.OTBOR_GOLOV_POKAPELNO.value:
+        device_state["power"] = device_state["power_m"] * 0.9 + random.uniform(-50, 50)
+    else:  # STOP, etc.
+        device_state["power"] = 0.0
+    device_state["power"] = max(0, device_state["power"])
+    
+    # Simulate atmospheric pressure
+    device_state["press_a"] += random.uniform(-0.1, 0.1)
+
+    # Update 'otbor' based on current work mode
+    if current_work_mode == WorkState.OTBOR_GOLOV_POKAPELNO.value:
+        device_state["otbor"] = device_state["otbor_g_1"]
+    elif current_work_mode == WorkState.OTBOR_TELA.value:
+        device_state["otbor"] = device_state["otbor_t"]
+    else:
+        device_state["otbor"] = 0
+
+    # --- Existing simulation logic for temperatures ---
+    
     # Имитация изменения term_k (температура в кубе)
     if current_work_mode == WorkState.RAZGON.value:
         term_k_change = random.uniform(2.0, 5.0)  # Быстрый нагрев
@@ -262,6 +314,8 @@ try:
         # Optional: Reduce noise by printing publish summary less often or conditionally
         # print(f"[{current_time}] Публикация данных:") 
         for key, value in device_state.items():
+            if key == "work":
+                continue # Do not publish internal 'work' state
             topic_to_publish = topic_prefix + key # Status topics remain the same
             client.publish(topic_to_publish, str(value))
             # Optional: Add print statement to see what's being published
