@@ -5,14 +5,14 @@ set -e
 
 # --- Configuration ---
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )" # Get the directory of this script
-PYTHON_SCRIPT="alco_esp_qt_client.py"
+PYTHON_SCRIPT="alco_esp/qt_client.py"
 APP_NAME="AlcoEspMonitor"
 BUILD_ROOT="build_output" # Single directory for all build artifacts
 VENV_DIR="$BUILD_ROOT/venv" # Virtual environment inside BUILD_ROOT
 DIST_DIR="$BUILD_ROOT/dist" # Output directory for the final build inside BUILD_ROOT
 WORK_DIR="$BUILD_ROOT/build_pyinstaller" # Temporary build directory for PyInstaller inside BUILD_ROOT
 
-# --- This script is for a modern 64-bit Linux OS. Run it from its directory (/alco_esp) ---
+# --- This script is for a modern 64-bit Linux OS. Run it from the root repository directory ---
 
 echo "--- Starting PyInstaller build for $PYTHON_SCRIPT ---"
 
@@ -41,7 +41,7 @@ source "$VENV_DIR/bin/activate"
 # 3. Install Dependencies
 echo "Installing required packages..."
 pip install --upgrade pip
-pip install -r ../requirements_ubuntu_64bit.txt
+pip install -r requirements_ubuntu_64bit.txt
 
 echo "Packages installed."
 
@@ -51,8 +51,8 @@ pyinstaller \
     --noconfirm \
     --name "$APP_NAME" \
     --noconsole \
-    --add-data "$SCRIPT_DIR/alarm.wav:." \
-    --add-data "$SCRIPT_DIR/secrets_template.json:." \
+    --add-data "$SCRIPT_DIR/alco_esp/alarm.wav:." \
+    --add-data "$SCRIPT_DIR/alco_esp/secrets_template.json:." \
     --distpath "$DIST_DIR" \
     --workpath "$WORK_DIR" \
     --specpath "$BUILD_ROOT" \

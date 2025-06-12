@@ -4,6 +4,6 @@
 /venv/
 /.venv/
 __pycache__
-/alco_esp/build_output/
+/build_output/
 /alco_esp/log/
-alco_esp/secrets.json
+/alco_esp/secrets.json

@@ -4,14 +4,14 @@ SET "SCRIPT_DIR=%~dp0"
 REM Remove trailing backslash from SCRIPT_DIR if it exists
 IF "%SCRIPT_DIR:~-1%"=="\" SET "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
-SET "PYTHON_SCRIPT=alco_esp_qt_client.py"
+SET "PYTHON_SCRIPT=alco_esp\qt_client.py"
 SET "APP_NAME=AlcoEspMonitor"
 SET "BUILD_ROOT=build_output"
 SET "VENV_DIR=%BUILD_ROOT%\venv"
 SET "DIST_DIR=%BUILD_ROOT%\dist"
 SET "WORK_DIR=%BUILD_ROOT%\build_pyinstaller"
 
-REM --- This script is for a 32-bit Windows OS. Run it from its directory (/alco_esp) ---
+REM --- This script is for a 32-bit Windows OS. Run it from the root repository directory ---
 
 ECHO --- Starting PyInstaller build for %PYTHON_SCRIPT% ---
 
@@ -52,7 +52,7 @@ IF ERRORLEVEL 1 (
     ECHO Failed to upgrade pip. Exiting.
     GOTO :EOF
 )
-pip install -r ..\requirements_windows_32bit.txt --only-binary :all:
+pip install -r requirements_windows_32bit.txt --only-binary :all:
 IF ERRORLEVEL 1 (
     ECHO Failed to install requirements. Exiting.
     GOTO :EOF
@@ -66,8 +66,8 @@ pyinstaller ^
     --noconfirm ^
     --name "%APP_NAME%" ^
     --noconsole ^
-    --add-data "%SCRIPT_DIR%\alarm.wav;." ^
-    --add-data "%SCRIPT_DIR%\secrets_template.json;." ^
+    --add-data "%SCRIPT_DIR%\alco_esp\alarm.wav;." ^
+    --add-data "%SCRIPT_DIR%\alco_esp\secrets_template.json;." ^
     --distpath "%DIST_DIR%" ^
     --workpath "%WORK_DIR%" ^
     --specpath "%BUILD_ROOT%" ^

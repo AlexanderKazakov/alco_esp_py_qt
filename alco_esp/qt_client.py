@@ -1,3 +1,4 @@
+import os
 import sys
 import signal
 import json
@@ -13,13 +14,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QL
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot, QTimer, Qt, QUrl
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtMultimedia import QSoundEffect
-import os
 from collections import deque
 from datetime import datetime, timedelta
 import logging
 from logging.handlers import RotatingFileHandler
 
-from alco_esp_constants import WORK_STATE_NAMES, WorkState
+from alco_esp.constants import WORK_STATE_NAMES
 
 
 client_id = "python_qt_client_viewer"
