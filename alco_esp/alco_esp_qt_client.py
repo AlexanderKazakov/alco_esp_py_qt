@@ -21,16 +21,19 @@ from alco_esp_constants import WORK_STATE_NAMES, WorkState
 
 
 # --- MQTT Settings (Copied from original script) ---
-client_id = "python_qt_client_viewer" # Changed client ID slightly
-# Updated topics to subscribe to based on new requirements
-topics = ["term_c", "term_k", "term_d"]
+client_id = "python_qt_client_viewer"
+# Topics to subscribe to
+topics_to_subscribe_to = ["term_c", "term_k", "term_d", "power", "press_a", "flag_otb"]
 
 # --- CSV Logging Settings ---
-CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d"]
+CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d", "power", "press_a", "flag_otb"]
 CSV_DATA_HEADERS = {
     "term_c": "T царга",
     "term_k": "T куб",
-    "term_d": "T дефлегматор"
+    "term_d": "T дефлегматор",
+    "power": "Мощность",
+    "press_a": "Атм. давление",
+    "flag_otb": "Флаг отбора"
 }
 
 # Path to the directory of the script or to the Pyinstaller executable directory
@@ -65,9 +68,9 @@ control_topics = {
 # --- Data Storage ---
 window_size = 10**6
 # Initialize data storage for all subscribed topics
-data = {key: deque(maxlen=window_size) for key in topics}
-timestamps = {key: deque(maxlen=window_size) for key in topics}
-latest_values = {key: None for key in topics}
+data = {key: deque(maxlen=window_size) for key in topics_to_subscribe_to}
+timestamps = {key: deque(maxlen=window_size) for key in topics_to_subscribe_to}
+latest_values = {key: None for key in topics_to_subscribe_to}
 
 # --- Default Settings for Signal Conditions ---
 DEFAULT_T_SIGNAL_KUB = 60.0  # °C
@@ -391,7 +394,7 @@ class AlcoEspMonitor(QMainWindow):
         self.setup_controls()
 
         self.lines = {}
-        self.latest_value_texts = {key: None for key in topics} # Updated for new topics
+        self.latest_value_texts = {key: None for key in topics_to_subscribe_to}
 
         self.configure_plots()
         self.setup_mqtt()
@@ -466,6 +469,43 @@ class AlcoEspMonitor(QMainWindow):
         controls_grid_layout = QGridLayout()
         controls_grid_layout.setSpacing(10)
         row = 0
+
+        # --- Current State Display ---
+        controls_grid_layout.addWidget(QLabel("<b>Текущие параметры:</b>"), row, 0, 1, 2)
+        row += 1
+
+        self.term_d_label = QLabel("T дефлегматор: -")
+        self.term_d_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.term_d_label, row, 0, 1, 2)
+        row += 1
+
+        self.term_c_label = QLabel("T царга: -")
+        self.term_c_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.term_c_label, row, 0, 1, 2)
+        row += 1
+
+        self.term_k_label = QLabel("T куб: -")
+        self.term_k_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.term_k_label, row, 0, 1, 2)
+        row += 1
+
+        self.power_label = QLabel("Мощность: -")
+        self.power_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.power_label, row, 0, 1, 2)
+        row += 1
+
+        self.press_a_label = QLabel("Атм. давление: -")
+        self.press_a_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.press_a_label, row, 0, 1, 2)
+        row += 1
+
+        self.flag_otb_label = QLabel("Флаг отбора: -")
+        self.flag_otb_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.flag_otb_label, row, 0, 1, 2)
+        row += 1
+
+        controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
+        row += 1
 
         # --- Work Mode Control ---
         controls_grid_layout.addWidget(QLabel("<b>Управление режимом:</b>"), row, 0, 1, 2)
@@ -704,7 +744,7 @@ class AlcoEspMonitor(QMainWindow):
             self.secrets["username"],
             self.secrets["password"],
             client_id,
-            topics
+            topics_to_subscribe_to
         )
         self.mqtt_worker.moveToThread(self.mqtt_thread)
 
@@ -741,11 +781,11 @@ class AlcoEspMonitor(QMainWindow):
         current_time = datetime.now()
 
         try:
-            if topic in ["term_c", "term_k", "term_d"]:
-                temp_value = float(payload_str)
-                latest_values[topic] = temp_value
+            if topic in topics_to_subscribe_to:
+                value = float(payload_str)
+                latest_values[topic] = value
                 if topic in data: # data is a global dictionary
-                    data[topic].append(temp_value)
+                    data[topic].append(value)
                     timestamps[topic].append(current_time)
 
                 # --- CSV Logging for temperature topics ---
@@ -753,7 +793,7 @@ class AlcoEspMonitor(QMainWindow):
                     time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
                     values = [''] * len(CSV_DATA_TOPIC_ORDER)
                     idx = CSV_DATA_TOPIC_ORDER.index(topic)
-                    values[idx] = str(temp_value)
+                    values[idx] = str(value)
                     log_line = f"{time_str};" + ";".join(values)
                     data_logger.info(log_line)
                 except Exception as e:
@@ -774,6 +814,7 @@ class AlcoEspMonitor(QMainWindow):
     def update_plots_and_signals(self):
         """Updates plots and checks signal conditions."""
         self.update_plots()
+        self.update_text_displays()
         self.check_signal_conditions()
         self.check_mqtt_data_timeout() # Add check for MQTT data timeout
 
@@ -791,8 +832,7 @@ class AlcoEspMonitor(QMainWindow):
                 
                 # Update the label for the legend
                 base_label = self.base_line_labels.get(key, key)
-                value_str = f": {latest_values[key]:.2f}°C" if latest_values[key] is not None else ""
-                self.lines[key].set_label(f"{base_label}{value_str}")
+                self.lines[key].set_label(base_label)
 
         self.ax.relim()
 
@@ -830,6 +870,45 @@ class AlcoEspMonitor(QMainWindow):
             self.canvas.draw()
         except Exception as e:
             logger.error(f"Error drawing canvas: {e}", exc_info=True)
+
+    def update_text_displays(self):
+        """Updates text labels with latest values."""
+
+        term_d = latest_values.get("term_d")
+        if term_d is not None:
+            self.term_d_label.setText(f"T дефлегматор: {term_d:.2f} °C")
+        else:
+            self.term_d_label.setText("T дефлегматор: -")
+        
+        term_c = latest_values.get("term_c")
+        if term_c is not None:
+            self.term_c_label.setText(f"T царга: {term_c:.2f} °C")
+        else:
+            self.term_c_label.setText("T царга: -")
+
+        term_k = latest_values.get("term_k")
+        if term_k is not None:
+            self.term_k_label.setText(f"T куб: {term_k:.2f} °C")
+        else:
+            self.term_k_label.setText("T куб: -")
+
+        power = latest_values.get("power")
+        if power is not None:
+            self.power_label.setText(f"Мощность: {power:.0f}")
+        else:
+            self.power_label.setText("Мощность: -")
+
+        press_a = latest_values.get("press_a")
+        if press_a is not None:
+            self.press_a_label.setText(f"Атм. давление: {press_a:.0f}")
+        else:
+            self.press_a_label.setText("Атм. давление: -")
+
+        flag_otb = latest_values.get("flag_otb")
+        if flag_otb is not None:
+            self.flag_otb_label.setText(f"Флаг отбора: {flag_otb}")
+        else:
+            self.flag_otb_label.setText("Флаг отбора: -")
 
     def check_signal_conditions(self):
         """Checks the conditions and updates the signal labels."""
