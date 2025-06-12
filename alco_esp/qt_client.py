@@ -10,7 +10,7 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel,
                              QGridLayout, QHBoxLayout, QDoubleSpinBox, QPushButton,
                              QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox, QComboBox,
-                             QTableWidget, QTableWidgetItem, QHeaderView)
+                             QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea)
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot, QTimer, Qt, QUrl
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtMultimedia import QSoundEffect
@@ -383,7 +383,6 @@ class AlcoEspMonitor(QMainWindow):
         self.secrets = secrets
         logger.info("Initializing AlcoEspMonitor main window.")
         self.setWindowTitle("Alco ESP Real-Time Monitor")
-        self.setGeometry(100, 100, 1200, 700) # Adjusted size
 
         # --- Initialize Settings ---
         self.settings = {
@@ -427,8 +426,14 @@ class AlcoEspMonitor(QMainWindow):
         # --- Left Controls Panel ---
         self.controls_widget = QWidget()
         self.controls_layout = QVBoxLayout(self.controls_widget)
-        self.controls_widget.setFixedWidth(350) # Slightly wider for more controls
-        self.main_layout.addWidget(self.controls_widget)
+
+        # --- Wrap controls_widget in a QScrollArea ---
+        self.controls_scroll_area = QScrollArea()
+        self.controls_scroll_area.setWidgetResizable(True)
+        self.controls_scroll_area.setWidget(self.controls_widget)
+        self.controls_scroll_area.setMinimumWidth(400)
+
+        self.main_layout.addWidget(self.controls_scroll_area)
 
         # --- Right Plot Panel ---
         self.plot_widget = QWidget()
