@@ -8,7 +8,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel,
                              QGridLayout, QHBoxLayout, QDoubleSpinBox, QPushButton,
-                             QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox)
+                             QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox, QComboBox)
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot, QTimer, Qt, QUrl
 from PyQt5.QtMultimedia import QSoundEffect
 import os
@@ -23,15 +23,14 @@ from alco_esp_constants import WORK_STATE_NAMES, WorkState
 # --- MQTT Settings (Copied from original script) ---
 client_id = "python_qt_client_viewer" # Changed client ID slightly
 # Updated topics to subscribe to based on new requirements
-topics = ["term_c", "term_k", "term_d", "work"]
+topics = ["term_c", "term_k", "term_d"]
 
 # --- CSV Logging Settings ---
-CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d", "work"]
+CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d"]
 CSV_DATA_HEADERS = {
     "term_c": "T царга",
     "term_k": "T куб",
-    "term_d": "T дефлегматор",
-    "work": "Режим работы"
+    "term_d": "T дефлегматор"
 }
 
 # Path to the directory of the script or to the Pyinstaller executable directory
@@ -355,12 +354,6 @@ class AlcoEspMonitor(QMainWindow):
         self.last_mqtt_message_time = datetime.now() # Initialize to app start time
         self.mqtt_data_timeout_alarm_active = False  # Flag to track if "no data" alarm is shown
 
-        # --- For ignoring self-published 'work' messages ---
-        self.last_sent_work_command_value = None
-        self.last_sent_work_command_time = None
-        # Ignore window for MQTT echoes, e.g., 0.5 seconds. Adjust if needed.
-        self.MQTT_ECHO_IGNORE_DURATION = timedelta(seconds=0.5) 
-
         # --- Initialize Sound Effect and Alarm Dialog (placeholder, actual init deferred) ---
         self.alarm_sound_effect = QSoundEffect(self)
         self.current_alarm_dialog = None # To keep track of the alarm dialog
@@ -478,35 +471,16 @@ class AlcoEspMonitor(QMainWindow):
         controls_grid_layout.addWidget(QLabel("<b>Управление режимом:</b>"), row, 0, 1, 2)
         row += 1
 
-        self.razgon_button = QPushButton(f"Разгон")
-        self.razgon_button.clicked.connect(lambda: self.publish_work_mode(WorkState.RAZGON.value))
-        controls_grid_layout.addWidget(self.razgon_button, row, 0)
-
-        self.golovy_button = QPushButton(f"Головы покапельно")
-        self.golovy_button.clicked.connect(lambda: self.publish_work_mode(WorkState.OTBOR_GOLOV_POKAPELNO.value))
-        controls_grid_layout.addWidget(self.golovy_button, row, 1)
+        self.work_mode_combobox = QComboBox()
+        # Populate combobox, sorted by code
+        for code, name in sorted(WORK_STATE_NAMES.items()):
+            self.work_mode_combobox.addItem(f"{name} ({code})", userData=code)
+        controls_grid_layout.addWidget(self.work_mode_combobox, row, 0, 1, 2)
         row += 1
 
-        self.otkl_otbora_button = QPushButton(f"Отключение отбора")
-        self.otkl_otbora_button.clicked.connect(lambda: self.publish_work_mode(WorkState.OTBOR_VYKLUCHEN.value))
-        controls_grid_layout.addWidget(self.otkl_otbora_button, row, 0)
-
-        self.telo_button = QPushButton(f"Тело")
-        self.telo_button.clicked.connect(lambda: self.publish_work_mode(WorkState.OTBOR_TELA.value))
-        controls_grid_layout.addWidget(self.telo_button, row, 1)
-        row += 1
-        
-        # Add STOP button
-        self.stop_button = QPushButton("Стоп")
-        self.stop_button.clicked.connect(lambda: self.publish_work_mode(WorkState.STOP.value))
-        controls_grid_layout.addWidget(self.stop_button, row, 0, 1, 2) # Span across two columns
-        row += 1
-        
-        # Display current work mode
-        controls_grid_layout.addWidget(QLabel("Текущий режим (work):"), row, 0)
-        self.current_work_mode_label = QLabel("Нет данных")
-        self.current_work_mode_label.setStyleSheet("font-weight: bold;")
-        controls_grid_layout.addWidget(self.current_work_mode_label, row, 1)
+        self.set_work_mode_button = QPushButton("Установить режим")
+        self.set_work_mode_button.clicked.connect(self.publish_selected_work_mode)
+        controls_grid_layout.addWidget(self.set_work_mode_button, row, 0, 1, 2)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
@@ -648,12 +622,14 @@ class AlcoEspMonitor(QMainWindow):
             # or if signals were reset.
             self.check_signal_conditions()
 
+    def publish_selected_work_mode(self):
+        mode_code = self.work_mode_combobox.currentData()
+        if mode_code is not None:
+            self.publish_work_mode(mode_code)
+
     def publish_work_mode(self, mode_code):
         """Publishes the selected work mode."""
         try:
-            # Record what we are about to send to potentially ignore the echo
-            self.last_sent_work_command_value = mode_code # Store the integer value
-            self.last_sent_work_command_time = datetime.now()
             mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
             logger.info(f"Requesting to set work mode: {mode_name} ({mode_code})")
             self.publishRequested.emit(control_topics["work"], str(mode_code))
@@ -765,46 +741,7 @@ class AlcoEspMonitor(QMainWindow):
         current_time = datetime.now()
 
         try:
-            if topic == "work":
-                work_value = int(payload_str)
-                is_echo = False
-                if self.last_sent_work_command_value is not None and \
-                   self.last_sent_work_command_time is not None and \
-                   work_value == self.last_sent_work_command_value and \
-                   (current_time - self.last_sent_work_command_time) < self.MQTT_ECHO_IGNORE_DURATION:
-                    # This is likely an echo of the command we just sent.
-                    logger.debug(f"Work topic: Likely echo ({work_value}). Ignoring for UI and data log.")
-                    is_echo = True
-                    # Consume the "sent command" flag so a subsequent real message from the device
-                    # with the same value isn't ignored.
-                    self.last_sent_work_command_value = None 
-                    self.last_sent_work_command_time = None
-                
-                if not is_echo:
-                    # This is considered a genuine message from the device (or an old echo)
-                    logger.debug(f"Work topic: Processing device message ({work_value}).")
-                    self.current_work_mode_label.setText(f"{WORK_STATE_NAMES.get(work_value, str(work_value))}")
-                    latest_values[topic] = work_value
-                    # Ensure 'data' and 'timestamps' are defined and accessible here
-                    # Assuming 'data' and 'timestamps' are global or class members accessible here
-                    if topic in data: # data is a global dictionary in your script
-                        data[topic].append(work_value)
-                        timestamps[topic].append(current_time)
-
-                    # --- CSV Logging for 'work' topic ---
-                    try:
-                        time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
-                        values = [''] * len(CSV_DATA_TOPIC_ORDER)
-                        idx = CSV_DATA_TOPIC_ORDER.index(topic)
-                        values[idx] = str(work_value)
-                        log_line = f"{time_str};" + ";".join(values)
-                        data_logger.info(log_line)
-                    except Exception as e:
-                        logger.error(f"Failed to write data to CSV for topic {topic}: {e}", exc_info=True)
-                
-                # If it's an echo, we do nothing further with this message for 'work' topic.
-
-            elif topic in ["term_c", "term_k", "term_d"]:
+            if topic in ["term_c", "term_k", "term_d"]:
                 temp_value = float(payload_str)
                 latest_values[topic] = temp_value
                 if topic in data: # data is a global dictionary
