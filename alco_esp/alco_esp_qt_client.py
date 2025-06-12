@@ -8,8 +8,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel,
                              QGridLayout, QHBoxLayout, QDoubleSpinBox, QPushButton,
-                             QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox, QComboBox)
+                             QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox, QComboBox,
+                             QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot, QTimer, Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtMultimedia import QSoundEffect
 import os
 from collections import deque
@@ -20,10 +22,10 @@ from logging.handlers import RotatingFileHandler
 from alco_esp_constants import WORK_STATE_NAMES, WorkState
 
 
-# --- MQTT Settings (Copied from original script) ---
 client_id = "python_qt_client_viewer"
-# Topics to subscribe to
-topics_to_subscribe_to = ["term_c", "term_k", "term_d", "power", "press_a", "flag_otb"]
+
+chart_temperature_topics = ["term_d", "term_c", "term_k"]
+topics_of_main_interest = chart_temperature_topics + ["power", "press_a", "flag_otb"]
 
 # --- CSV Logging Settings ---
 CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d", "power", "press_a", "flag_otb"]
@@ -68,9 +70,8 @@ control_topics = {
 # --- Data Storage ---
 window_size = 10**6
 # Initialize data storage for all subscribed topics
-data = {key: deque(maxlen=window_size) for key in topics_to_subscribe_to}
-timestamps = {key: deque(maxlen=window_size) for key in topics_to_subscribe_to}
-latest_values = {key: None for key in topics_to_subscribe_to}
+data = {key: deque(maxlen=window_size) for key in chart_temperature_topics}
+timestamps = {key: deque(maxlen=window_size) for key in chart_temperature_topics}
 
 # --- Default Settings for Signal Conditions ---
 DEFAULT_T_SIGNAL_KUB = 60.0  # °C
@@ -175,6 +176,52 @@ class SettingsDialog(QDialog):
             "period_seconds": int(self.period_spinbox.value())
         }
 
+
+class AllDataViewerDialog(QDialog):
+    def __init__(self, data_dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Все данные от устройства")
+        self.setModal(False)
+        self.setGeometry(200, 200, 500, 700)
+
+        layout = QVBoxLayout(self)
+
+        self.log_button = QPushButton("Показать журналы данных")
+        self.log_button.clicked.connect(self.open_log_folder)
+        layout.addWidget(self.log_button)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Параметр", "Значение"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.setSortingEnabled(True)
+
+        layout.addWidget(self.table)
+        self.update_data(data_dict)
+
+    def open_log_folder(self):
+        log_dir = os.path.join(APP_ROOT_DIR, "log")
+        if os.path.isdir(log_dir):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(log_dir))
+        else:
+            QMessageBox.warning(self, "Папка не найдена", f"Папка с журналами не найдена:\n{log_dir}")
+
+    def update_data(self, data_dict):
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(data_dict))
+        
+        # Using a list from items() is sufficient
+        sorted_items = sorted(data_dict.items())
+
+        for row, (key, value) in enumerate(sorted_items):
+            self.table.setItem(row, 0, QTableWidgetItem(str(key)))
+            self.table.setItem(row, 1, QTableWidgetItem(str(value)))
+            
+        self.table.resizeRowsToContents()
+        self.table.setSortingEnabled(True)
+
+
 # --- Alarm Notification Dialog ---
 class AlarmNotificationDialog(QDialog):
     def __init__(self, message, sound_effect, parent=None):
@@ -225,14 +272,14 @@ class MqttWorker(QObject):
     connectionStatus = pyqtSignal(str)    # status message
     finished = pyqtSignal()               # Signal emitted when the worker is done
 
-    def __init__(self, broker, port, username, password, client_id, topics_to_subscribe):
+    def __init__(self, broker, port, username, password, client_id):  #, topics_to_subscribe):
         super().__init__()
         self.broker = broker
         self.port = port
         self.username = username
         self.password = password
         self.client_id = client_id
-        self.topics_to_subscribe = topics_to_subscribe
+        # self.topics_to_subscribe = topics_to_subscribe
         self.topic_prefix = f"{username}/"
         self.client = None
 
@@ -241,10 +288,14 @@ class MqttWorker(QObject):
             log_msg = f"Подключено к MQTT брокеру: {self.broker}"
             logger.info(log_msg)
             self.connectionStatus.emit(log_msg)
-            for key in self.topics_to_subscribe:
-                topic_to_sub = self.topic_prefix + key
-                client.subscribe(topic_to_sub)
-                logger.info(f"Subscribed to: {topic_to_sub}")
+            
+            # Subscribe to the wildcard topic to get all messages from the device.
+            # The handle_message function will then filter for topics of interest.
+            # Subscribing to individual topics in addition to the wildcard caused duplicate message delivery.
+            wildcard_topic = f"{self.topic_prefix}#"
+            client.subscribe(wildcard_topic, qos=0)
+            logger.info(f"Subscribed to wildcard topic to receive all device data: {wildcard_topic}")
+        
         else:
             log_msg = f"Ошибка подключения, код {rc}"
             logger.error(log_msg)
@@ -342,6 +393,10 @@ class AlcoEspMonitor(QMainWindow):
             "period_seconds": DEFAULT_PERIOD_SECONDS
         }
 
+        # --- Storage for all device data ---
+        self.all_latest_values = {}
+        self.all_data_viewer_dialog = None
+
         # --- Initialize Signal States ---
         self.t_kub_signal_monitoring_active = True
         self.t_kub_signal_triggered = False
@@ -394,7 +449,6 @@ class AlcoEspMonitor(QMainWindow):
         self.setup_controls()
 
         self.lines = {}
-        self.latest_value_texts = {key: None for key in topics_to_subscribe_to}
 
         self.configure_plots()
         self.setup_mqtt()
@@ -471,7 +525,10 @@ class AlcoEspMonitor(QMainWindow):
         row = 0
 
         # --- Current State Display ---
-        controls_grid_layout.addWidget(QLabel("<b>Текущие параметры:</b>"), row, 0, 1, 2)
+        controls_grid_layout.addWidget(QLabel("<b>Текущие параметры:</b>"), row, 0, 1, 1)
+        self.all_data_button = QPushButton("Все данные")
+        self.all_data_button.clicked.connect(self.open_all_data_viewer)
+        controls_grid_layout.addWidget(self.all_data_button, row, 1, 1, 1)
         row += 1
 
         self.term_d_label = QLabel("T дефлегматор: -")
@@ -621,6 +678,18 @@ class AlcoEspMonitor(QMainWindow):
         self.controls_layout.addLayout(controls_grid_layout)
         self.controls_layout.addStretch(1)
 
+    def open_all_data_viewer(self):
+        if self.all_data_viewer_dialog is None:
+            # Create and show the dialog
+            self.all_data_viewer_dialog = AllDataViewerDialog(self.all_latest_values, self)
+            # When the dialog is closed (e.g., by the user), reset our reference to it.
+            self.all_data_viewer_dialog.finished.connect(lambda: setattr(self, 'all_data_viewer_dialog', None))
+            self.all_data_viewer_dialog.show()
+        else:
+            # If it already exists, just bring it to the front
+            self.all_data_viewer_dialog.activateWindow()
+            self.all_data_viewer_dialog.raise_()
+
     def open_settings_dialog(self):
         dialog = SettingsDialog(self, self.settings)
         # Store old settings for comparison
@@ -743,8 +812,7 @@ class AlcoEspMonitor(QMainWindow):
             self.secrets["port"],
             self.secrets["username"],
             self.secrets["password"],
-            client_id,
-            topics_to_subscribe_to
+            client_id
         )
         self.mqtt_worker.moveToThread(self.mqtt_thread)
 
@@ -772,52 +840,40 @@ class AlcoEspMonitor(QMainWindow):
     @pyqtSlot(str, str)
     def handle_message(self, topic, payload_str):
         """Processes incoming MQTT messages."""
-        self.last_mqtt_message_time = datetime.now() # Update time of last message
+        current_time = datetime.now()
+        self.last_mqtt_message_time = current_time
+        time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
         if self.mqtt_data_timeout_alarm_active: # If "no data" alarm was active, reset its flag
             self.mqtt_data_timeout_alarm_active = False
-            # The dialog itself will remain until dismissed by the user.
-            # This flag prevents re-triggering the alarm logic.
 
-        current_time = datetime.now()
-        value = None
+        # --- Store all data ---
+        self.all_latest_values[topic] = payload_str
 
+        # --- CSV Logging for all the device data  ---
         try:
-            if topic in topics_to_subscribe_to:
-                # Handle string-based topics first
-                if topic == "flag_otb":
-                    value = payload_str  # Keep it as a string
-                    latest_values[topic] = value
-                    # Note: We don't add string values to the numerical `data` deques for plotting.
-                else:
-                    # For all other topics, attempt to convert to float
-                    value = float(payload_str)
-                    latest_values[topic] = value
-                    if topic in data:  # data is a dictionary of deques for plotting
-                        data[topic].append(value)
-                        timestamps[topic].append(current_time)
-
-                # --- CSV Logging for all subscribed topics ---
-                try:
-                    time_str = current_time.strftime('%Y-%m-%d %H:%M:%S') + '.' + str(current_time.microsecond // 1000).zfill(3)
-                    values = [''] * len(CSV_DATA_TOPIC_ORDER)
-                    idx = CSV_DATA_TOPIC_ORDER.index(topic)
-                    values[idx] = str(value)  # value is either string or float, str() handles both
-                    log_line = f"{time_str};" + ";".join(values)
-                    data_logger.info(log_line)
-                except Exception as e:
-                    logger.error(f"Failed to write data to CSV for topic {topic}: {e}", exc_info=True)
-            
-            else:
-                # print(f"Warning: Received message for unexpected topic '{topic}'")
-                logger.debug(f"Received message for unhandled topic '{topic}': '{payload_str}'")
-                return # Exit if topic is not recognized
-
-        except ValueError:
-            logger.warning(f"Could not convert payload '{payload_str}' for topic '{topic}' to number.")
-            return
+            all_data_logger.info(f"{time_str};{topic};{payload_str}")
         except Exception as e:
-            logger.error(f"Error handling MQTT message topic='{topic}', payload='{payload_str}': {e}", exc_info=True)
-            return
+            logger.error(f"Failed to write to all_data.csv for topic {topic}: {e}", exc_info=True)
+
+        # --- CSV Logging specially for topics of main interest ---
+        if topic in topics_of_main_interest:
+            try:
+                values = [''] * len(CSV_DATA_TOPIC_ORDER)
+                idx = CSV_DATA_TOPIC_ORDER.index(topic)
+                values[idx] = payload_str
+                log_line = f"{time_str};" + ";".join(values)
+                main_data_logger.info(log_line)
+            except Exception as e:
+                logger.error(f"Failed to write data to CSV for topic {topic}: {e}", exc_info=True)
+
+        # --- Process specific topics for plotting ---
+        if topic in chart_temperature_topics:
+            try:
+                value = float(payload_str)
+                data[topic].append(value)
+                timestamps[topic].append(current_time)
+            except ValueError:
+                logger.error(f"Could not convert payload '{payload_str}' for topic '{topic}' to number.")
 
     def update_plots_and_signals(self):
         """Updates plots and checks signal conditions."""
@@ -825,6 +881,8 @@ class AlcoEspMonitor(QMainWindow):
         self.update_text_displays()
         self.check_signal_conditions()
         self.check_mqtt_data_timeout() # Add check for MQTT data timeout
+        if self.all_data_viewer_dialog:
+            self.all_data_viewer_dialog.update_data(self.all_latest_values)
 
     def update_plots(self):
         """Updates the Matplotlib plots with the latest data."""
@@ -882,37 +940,37 @@ class AlcoEspMonitor(QMainWindow):
     def update_text_displays(self):
         """Updates text labels with latest values."""
 
-        term_d = latest_values.get("term_d")
+        term_d = self.all_latest_values.get("term_d")
         if term_d is not None:
-            self.term_d_label.setText(f"T дефлегматор: {term_d:.2f} °C")
+            self.term_d_label.setText(f"T дефлегматор: {float(term_d):.1f} °C")
         else:
             self.term_d_label.setText("T дефлегматор: -")
         
-        term_c = latest_values.get("term_c")
+        term_c = self.all_latest_values.get("term_c")
         if term_c is not None:
-            self.term_c_label.setText(f"T царга: {term_c:.2f} °C")
+            self.term_c_label.setText(f"T царга: {float(term_c):.1f} °C")
         else:
             self.term_c_label.setText("T царга: -")
 
-        term_k = latest_values.get("term_k")
+        term_k = self.all_latest_values.get("term_k")
         if term_k is not None:
-            self.term_k_label.setText(f"T куб: {term_k:.2f} °C")
+            self.term_k_label.setText(f"T куб: {float(term_k):.1f} °C")
         else:
             self.term_k_label.setText("T куб: -")
 
-        power = latest_values.get("power")
+        power = self.all_latest_values.get("power")
         if power is not None:
-            self.power_label.setText(f"Мощность: {power:.0f}")
+            self.power_label.setText(f"Мощность: {float(power):.1f} Вт")
         else:
             self.power_label.setText("Мощность: -")
 
-        press_a = latest_values.get("press_a")
+        press_a = self.all_latest_values.get("press_a")
         if press_a is not None:
-            self.press_a_label.setText(f"Атм. давление: {press_a:.0f}")
+            self.press_a_label.setText(f"Атм. давление: {float(press_a):.1f} мм.рт.ст")
         else:
             self.press_a_label.setText("Атм. давление: -")
 
-        flag_otb = latest_values.get("flag_otb")
+        flag_otb = self.all_latest_values.get("flag_otb")
         if flag_otb is not None:
             self.flag_otb_label.setText(f"Флаг отбора: {flag_otb}")
         else:
@@ -986,7 +1044,7 @@ class AlcoEspMonitor(QMainWindow):
             name_for_ui,
             short_name_for_ui
         ):
-        temp_value = latest_values.get(topic_key)
+        temp_value = self.all_latest_values.get(topic_key)
         threshold = self.settings[setting_key]
         monitoring_active = getattr(self, monitoring_active_attr)
         label_widget = getattr(self, label_attr)
@@ -997,6 +1055,7 @@ class AlcoEspMonitor(QMainWindow):
             logger.debug(f"{name_for_log} signal monitoring is active.")
             if temp_value is not None:
                 logger.debug(f"{topic_key} is {temp_value}.")
+                temp_value = float(temp_value)
                 if temp_value >= threshold:
                     logger.info(f"{name_for_log} signal TRIGGERED: {topic_key} ({temp_value}) >= threshold ({threshold})")
                     setattr(self, triggered_attr, True)
@@ -1014,7 +1073,7 @@ class AlcoEspMonitor(QMainWindow):
                 style_sheet = STYLE_MONITORING
         
         else: # Monitoring not active
-            if temp_value is not None and temp_value < threshold:
+            if temp_value is not None and float(temp_value) < threshold:
                 logger.info(f"{name_for_log} below threshold while monitoring off, resetting signal.")
                 reset_func() # This will re-evaluate and update the UI.
                 self.reset_stability_signal()
@@ -1057,8 +1116,8 @@ class AlcoEspMonitor(QMainWindow):
 
     def check_temperature_stability_signal(self):
         """Checks the temperature stability signal condition and updates its label."""
-        term_k = latest_values.get("term_k")
-        term_c = latest_values.get("term_c")
+        term_k = self.all_latest_values.get("term_k")
+        term_c = self.all_latest_values.get("term_c")
         delta_t_threshold = self.settings["delta_t"]
         period_seconds_threshold = self.settings["period_seconds"]
         TERM_K_70 = 70.0
@@ -1067,6 +1126,8 @@ class AlcoEspMonitor(QMainWindow):
         if self.stability_signal_monitoring_active: # Signal is armed and monitoring
             logger.debug("Stability signal monitoring is active.")
             if term_k is not None and term_c is not None:
+                term_k = float(term_k)
+                term_c = float(term_c)
                 delta = abs(term_k - term_c)
                 logger.debug(f"Stability signal: term_k={term_k}, term_c={term_c}, calculated_delta={delta:.2f}")
 
@@ -1197,7 +1258,7 @@ class CsvRotatingFileHandler(RotatingFileHandler):
 
 def setup_data_logging():
     """Sets up a separate logger for CSV data."""
-    data_logger.setLevel(logging.INFO)
+    main_data_logger.setLevel(logging.INFO)
 
     log_dir = os.path.join(APP_ROOT_DIR, "log")
     log_file = os.path.join(log_dir, "alco_esp_data.csv")
@@ -1217,11 +1278,35 @@ def setup_data_logging():
     formatter = logging.Formatter('%(message)s')
     file_handler.setFormatter(formatter)
 
-    data_logger.addHandler(file_handler)
+    main_data_logger.addHandler(file_handler)
 
     # Prevent data logs from propagating to the root logger (and thus the console)
-    data_logger.propagate = False
+    main_data_logger.propagate = False
     logger.info("Data logging to CSV setup complete.")
+
+
+def setup_all_data_logging():
+    """Sets up a separate logger for all incoming device data."""
+    all_data_logger.setLevel(logging.INFO)
+
+    log_dir = os.path.join(APP_ROOT_DIR, "log")
+    log_file = os.path.join(log_dir, "alco_esp_all_device_data.csv")
+    csv_header = "Время;Топик;Значение"
+
+    file_handler = CsvRotatingFileHandler(
+        log_file,
+        mode='a',
+        maxBytes=100 * 1024 * 1024,
+        backupCount=5,
+        encoding='utf-8-sig',
+        header=csv_header
+    )
+
+    formatter = logging.Formatter('%(message)s')
+    file_handler.setFormatter(formatter)
+    all_data_logger.addHandler(file_handler)
+    all_data_logger.propagate = False
+    logger.info("All data logging to all_device_data.csv setup complete.")
 
 
 def setup_logging():
@@ -1267,9 +1352,11 @@ def setup_logging():
 if __name__ == '__main__':
     # --- Global Logger Setup ---
     logger = logging.getLogger("AlcoEspMonitorApp")
-    data_logger = logging.getLogger("AlcoEspDataLogger")
+    main_data_logger = logging.getLogger("AlcoEspDataLogger")
+    all_data_logger = logging.getLogger("AlcoEspAllDataLogger")
     setup_logging() # Call setup_logging here
     setup_data_logging()
+    setup_all_data_logging()
     logger.info("Application starting...")
 
     app = QApplication(sys.argv)
