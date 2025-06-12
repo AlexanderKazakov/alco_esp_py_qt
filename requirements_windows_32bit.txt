@@ -1,4 +1,4 @@
-matplotlib
-paho-mqtt
-PyQt5
-pyinstaller
+matplotlib==3.7.5
+paho-mqtt==2.1.0
+PyQt5==5.15.11
+pyinstaller==6.14.1
