@@ -19,8 +19,7 @@ from datetime import datetime, timedelta
 import logging
 from logging.handlers import RotatingFileHandler
 
-from alco_esp.constants import WORK_STATE_NAMES
-
+from alco_esp.constants import WORK_STATE_NAMES, WorkState
 
 client_id = "python_qt_client_viewer"
 
@@ -78,6 +77,7 @@ DEFAULT_T_SIGNAL_KUB = 60.0  # °C
 DEFAULT_T_SIGNAL_DEFLEGMATOR = 70.0  # °C
 DEFAULT_DELTA_T = 0.2       # °C
 DEFAULT_PERIOD_SECONDS = 60 # seconds
+DEFAULT_TEMP_STOP_RAZGON = 70.0  # °C
 
 
 def load_secrets_with_gui_feedback():
@@ -848,10 +848,22 @@ class AlcoEspMonitor(QMainWindow):
     def publish_work_mode(self, mode_code):
         """Publishes the selected work mode."""
         try:
+            if mode_code == WorkState.RAZGON.value:
+                """
+                Из документации:
+                При дистанционном включении режима разгона сначала выставляем
+                значение температуры в кубе, при которой нужно закончить разгон. 
+                Потом включить разгон в плитке «work».
+                """
+                logger.info(f"Requesting to set term_k_r: {DEFAULT_TEMP_STOP_RAZGON}")
+                self.publishRequested.emit("term_k_r", str(DEFAULT_TEMP_STOP_RAZGON))
+                self.update_status(f"Запрос на установку температуры разгона куба term_k_r: {DEFAULT_TEMP_STOP_RAZGON}")
+
             mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
             logger.info(f"Requesting to set work mode: {mode_name} ({mode_code})")
             self.publishRequested.emit(control_topics["work"], str(mode_code))
             self.update_status(f"Запрос на установку режима: {mode_name} ({mode_code})")
+
         except Exception as e:
             logger.error(f"Error preparing work mode publication: {e}", exc_info=True)
             self.update_status(f"Ошибка подготовки публикации режима: {e}")
