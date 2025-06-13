@@ -568,18 +568,21 @@ class AlcoEspMonitor(QMainWindow):
         logger.debug("Setting up UI controls.")
         controls_grid_layout = QGridLayout()
         controls_grid_layout.setSpacing(10)
+        # Use a 6-column layout to enforce a 4:1:1 ratio for controls
+        for i in range(6):
+            controls_grid_layout.setColumnStretch(i, 1)
         row = 0
 
         # --- Current State Display ---
-        controls_grid_layout.addWidget(QLabel("<b>Текущие параметры:</b>"), row, 0, 1, 1)
+        controls_grid_layout.addWidget(QLabel("<b>Текущие параметры:</b>"), row, 0, 1, 4)
         self.all_data_button = QPushButton("Все данные")
         self.all_data_button.clicked.connect(self.open_all_data_viewer)
-        controls_grid_layout.addWidget(self.all_data_button, row, 1, 1, 1)
+        controls_grid_layout.addWidget(self.all_data_button, row, 4, 1, 2)
         row += 1
 
         self.last_update_time_label = QLabel("Последнее сообщение от устройства: -")
         self.last_update_time_label.setStyleSheet("padding: 2px; font-style: italic;")
-        controls_grid_layout.addWidget(self.last_update_time_label, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.last_update_time_label, row, 0, 1, 6)
         row += 1
 
         # --- Grouped parameter display ---
@@ -623,114 +626,131 @@ class AlcoEspMonitor(QMainWindow):
         other_params_layout.addStretch()
         params_layout.addLayout(other_params_layout)
         
-        controls_grid_layout.addLayout(params_layout, row, 0, 1, 2)
+        controls_grid_layout.addLayout(params_layout, row, 0, 1, 6)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
         row += 1
 
         # --- Work Mode Control ---
-        controls_grid_layout.addWidget(QLabel("<b>Управление режимом:</b>"), row, 0, 1, 2)
+        controls_grid_layout.addWidget(QLabel("<b>Управление устройством:</b>"), row, 0, 1, 6)
         row += 1
 
+        self.work_mode_label = QLabel("Режим работы:")
+        controls_grid_layout.addWidget(self.work_mode_label, row, 0, 1, 4)
         self.work_mode_combobox = QComboBox()
-        # Populate combobox, sorted by code
+        self.work_mode_combobox.addItem("Выбрать", userData=None)
         for code, name in sorted(WORK_STATE_NAMES.items()):
             self.work_mode_combobox.addItem(f"{name} ({code})", userData=code)
-        controls_grid_layout.addWidget(self.work_mode_combobox, row, 0, 1, 2)
-        row += 1
+        controls_grid_layout.addWidget(self.work_mode_combobox, row, 4, 1, 1)
 
-        self.set_work_mode_button = QPushButton("Установить режим")
+        self.set_work_mode_button = QPushButton("Установить")
         self.set_work_mode_button.clicked.connect(self.publish_selected_work_mode)
-        controls_grid_layout.addWidget(self.set_work_mode_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.set_work_mode_button, row, 5, 1, 1)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
         row += 1
 
         # --- Otbor Golov Speed Control ---
-        controls_grid_layout.addWidget(QLabel("<b>Отбор голов покапельно:</b>"), row, 0, 1, 2)
+        controls_grid_layout.addWidget(QLabel("<b>Отбор голов покапельно:</b>"), row, 0, 1, 6)
         row += 1
-        controls_grid_layout.addWidget(QLabel("Скорость (ШИМ, %):"), row, 0)
+        self.otbor_g_1_label = QLabel("ШИМ, %:")
+        controls_grid_layout.addWidget(self.otbor_g_1_label, row, 0, 1, 4)
+
         self.otbor_g_1_spinbox = QDoubleSpinBox()
-        self.otbor_g_1_spinbox.setRange(0, 99) # PWM in %
+        self.otbor_g_1_spinbox.setRange(0, 99)
         self.otbor_g_1_spinbox.setDecimals(0)
-        controls_grid_layout.addWidget(self.otbor_g_1_spinbox, row, 1)
-        row += 1
-        self.set_otbor_g_1_button = QPushButton("Установить параметры отбора голов покапельно")
-        self.set_otbor_g_1_button.clicked.connect(self.publish_otbor_g_1_speed)
-        controls_grid_layout.addWidget(self.set_otbor_g_1_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.otbor_g_1_spinbox, row, 4, 1, 1)
+
+        set_otbor_g_1_button = QPushButton("Установить")
+        set_otbor_g_1_button.clicked.connect(self.publish_otbor_g_1_speed)
+        controls_grid_layout.addWidget(set_otbor_g_1_button, row, 5, 1, 1)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
         row += 1
 
         # --- Otbor Tela Control ---
-        controls_grid_layout.addWidget(QLabel("<b>Отбор тела:</b>"), row, 0, 1, 2)
+        controls_grid_layout.addWidget(QLabel("<b>Отбор тела:</b>"), row, 0, 1, 6)
         row += 1
-        controls_grid_layout.addWidget(QLabel("T стоп (°C):"), row, 0)
+
+        # T стоп
+        self.term_c_max_telo_label = QLabel("T стоп, °C:")
+        controls_grid_layout.addWidget(self.term_c_max_telo_label, row, 0, 1, 4)
         self.term_c_max_telo_spinbox = QDoubleSpinBox()
         self.term_c_max_telo_spinbox.setRange(0.0, 100.0)
         self.term_c_max_telo_spinbox.setDecimals(1)
         self.term_c_max_telo_spinbox.setSingleStep(0.1)
-        controls_grid_layout.addWidget(self.term_c_max_telo_spinbox, row, 1)
+        controls_grid_layout.addWidget(self.term_c_max_telo_spinbox, row, 4, 1, 1)
+        set_term_c_max_button = QPushButton("Установить")
+        set_term_c_max_button.clicked.connect(self.publish_term_c_max_telo)
+        controls_grid_layout.addWidget(set_term_c_max_button, row, 5, 1, 1)
         row += 1
-        controls_grid_layout.addWidget(QLabel("T старт (°C):"), row, 0)
+
+        # T старт
+        self.term_c_min_telo_label = QLabel("T старт, °C:")
+        controls_grid_layout.addWidget(self.term_c_min_telo_label, row, 0, 1, 4)
         self.term_c_min_telo_spinbox = QDoubleSpinBox()
         self.term_c_min_telo_spinbox.setRange(0.0, 100.0)
         self.term_c_min_telo_spinbox.setDecimals(1)
         self.term_c_min_telo_spinbox.setSingleStep(0.1)
-        controls_grid_layout.addWidget(self.term_c_min_telo_spinbox, row, 1)
+        controls_grid_layout.addWidget(self.term_c_min_telo_spinbox, row, 4, 1, 1)
+        set_term_c_min_button = QPushButton("Установить")
+        set_term_c_min_button.clicked.connect(self.publish_term_c_min_telo)
+        controls_grid_layout.addWidget(set_term_c_min_button, row, 5, 1, 1)
         row += 1
-        controls_grid_layout.addWidget(QLabel("ШИМ отбора тела (%):"), row, 0)
+
+        # ШИМ отбора
+        self.otbor_t_label = QLabel("ШИМ, %:")
+        controls_grid_layout.addWidget(self.otbor_t_label, row, 0, 1, 4)
         self.otbor_t_spinbox = QDoubleSpinBox()
-        self.otbor_t_spinbox.setRange(0, 99) # PWM in %
+        self.otbor_t_spinbox.setRange(0, 99)
         self.otbor_t_spinbox.setDecimals(0)
-        controls_grid_layout.addWidget(self.otbor_t_spinbox, row, 1)
-        row += 1
-        self.set_otbor_t_button = QPushButton("Установить параметры отбора тела")
-        self.set_otbor_t_button.clicked.connect(self.publish_otbor_t_params)
-        controls_grid_layout.addWidget(self.set_otbor_t_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.otbor_t_spinbox, row, 4, 1, 1)
+        set_otbor_t_button = QPushButton("Установить")
+        set_otbor_t_button.clicked.connect(self.publish_otbor_t_pwm)
+        controls_grid_layout.addWidget(set_otbor_t_button, row, 5, 1, 1)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
         row += 1
 
         # --- Signal Conditions ---
-        controls_grid_layout.addWidget(QLabel("<b>Сигналы (однократные):</b>"), row, 0, 1, 2)
+        controls_grid_layout.addWidget(QLabel("<b>Сигналы (однократные):</b>"), row, 0, 1, 6)
         row += 1
 
         self.t_kub_signal_label = QLabel("T куба: Ожидание...")
         self.t_kub_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.t_kub_signal_label.setAlignment(Qt.AlignCenter)
         self.t_kub_signal_label.setWordWrap(True)
-        controls_grid_layout.addWidget(self.t_kub_signal_label, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.t_kub_signal_label, row, 0, 1, 6)
         row += 1
         self.reset_t_kub_signal_button = QPushButton("Сброс сигнала T куба")
         self.reset_t_kub_signal_button.clicked.connect(lambda: self.reset_t_kub_signal())
-        controls_grid_layout.addWidget(self.reset_t_kub_signal_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.reset_t_kub_signal_button, row, 0, 1, 6)
         row += 1
 
         self.t_deflegmator_signal_label = QLabel("T дефлегматора: Ожидание...")
         self.t_deflegmator_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.t_deflegmator_signal_label.setAlignment(Qt.AlignCenter)
         self.t_deflegmator_signal_label.setWordWrap(True)
-        controls_grid_layout.addWidget(self.t_deflegmator_signal_label, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.t_deflegmator_signal_label, row, 0, 1, 6)
         row += 1
         self.reset_t_deflegmator_signal_button = QPushButton("Сброс сигнала T дефлегматора")
         self.reset_t_deflegmator_signal_button.clicked.connect(lambda: self.reset_t_deflegmator_signal())
-        controls_grid_layout.addWidget(self.reset_t_deflegmator_signal_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.reset_t_deflegmator_signal_button, row, 0, 1, 6)
         row += 1
 
         self.stability_signal_label = QLabel("Стабильность T: Ожидание...")
         self.stability_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.stability_signal_label.setAlignment(Qt.AlignCenter)
         self.stability_signal_label.setWordWrap(True)
-        controls_grid_layout.addWidget(self.stability_signal_label, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.stability_signal_label, row, 0, 1, 6)
         row += 1
         self.reset_stability_signal_button = QPushButton("Сброс сигнала ΔT")
         self.reset_stability_signal_button.clicked.connect(lambda: self.reset_stability_signal())
-        controls_grid_layout.addWidget(self.reset_stability_signal_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.reset_stability_signal_button, row, 0, 1, 6)
         row += 1
         
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Expanding), row, 0)
@@ -739,7 +759,7 @@ class AlcoEspMonitor(QMainWindow):
         # --- Settings Button ---
         self.settings_button = QPushButton("Настройки сигналов")
         self.settings_button.clicked.connect(self.open_settings_dialog)
-        controls_grid_layout.addWidget(self.settings_button, row, 0, 1, 2)
+        controls_grid_layout.addWidget(self.settings_button, row, 0, 1, 6)
         row += 1
 
         self.controls_layout.addLayout(controls_grid_layout)
@@ -818,6 +838,12 @@ class AlcoEspMonitor(QMainWindow):
         mode_code = self.work_mode_combobox.currentData()
         if mode_code is not None:
             self.publish_work_mode(mode_code)
+            # Reset the combobox to the default "Выбрать" state
+            select_index = self.work_mode_combobox.findText("Выбрать")
+            if select_index != -1:
+                self.work_mode_combobox.setCurrentIndex(select_index)
+            else:
+                logger.warning("Could not find 'Выбрать' in work_mode_combobox to reset it.")
 
     def publish_work_mode(self, mode_code):
         """Publishes the selected work mode."""
@@ -841,27 +867,41 @@ class AlcoEspMonitor(QMainWindow):
             logger.error(f"Error preparing otbor golov speed publication: {e}", exc_info=True)
             self.update_status(f"Ошибка подготовки ШИМ отбора голов: {e}")
 
-    def publish_otbor_t_params(self):
-        """Publishes parameters for 'otbor tela'."""
+    def publish_term_c_max_telo(self):
+        """Publishes the 'T stop' for 'otbor tela'."""
         try:
             t_stop = self.term_c_max_telo_spinbox.value()
-            t_start = self.term_c_min_telo_spinbox.value()
-            pwm_val = int(self.otbor_t_spinbox.value())
-
-            if t_start >= t_stop:
-                logger.warning(f"Invalid input for otbor tela params: T_start ({t_start}) >= T_stop ({t_stop}).")
-                QMessageBox.warning(self, "Ошибка ввода", "T старт должна быть меньше T стоп.")
-                return
-            
-            log_msg = f"Requesting otbor tela params: T_stop={t_stop}, T_start={t_start}, PWM={pwm_val}"
+            log_msg = f"Requesting otbor tela T_stop={t_stop}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["term_c_max_new"], str(t_stop))
-            self.publishRequested.emit(control_topics["term_c_min_new"], str(t_start))
-            self.publishRequested.emit(control_topics["otbor_t_new"], str(pwm_val))
-            self.update_status(f"Запрос параметров отбора тела: T_stop={t_stop}, T_start={t_start}, ШИМ={pwm_val}")
+            self.update_status(f"Запрос T стоп отбора тела: {t_stop}°C")
         except Exception as e:
-            logger.error(f"Error preparing otbor tela params publication: {e}", exc_info=True)
-            self.update_status(f"Ошибка подготовки параметров отбора тела: {e}")
+            logger.error(f"Error preparing otbor tela T_stop publication: {e}", exc_info=True)
+            self.update_status(f"Ошибка T стоп отбора тела: {e}")
+
+    def publish_term_c_min_telo(self):
+        """Publishes the 'T start' for 'otbor tela'."""
+        try:
+            t_start = self.term_c_min_telo_spinbox.value()
+            log_msg = f"Requesting otbor tela T_start={t_start}"
+            logger.info(log_msg)
+            self.publishRequested.emit(control_topics["term_c_min_new"], str(t_start))
+            self.update_status(f"Запрос T старт отбора тела: {t_start}°C")
+        except Exception as e:
+            logger.error(f"Error preparing otbor tela T_start publication: {e}", exc_info=True)
+            self.update_status(f"Ошибка T старт отбора тела: {e}")
+
+    def publish_otbor_t_pwm(self):
+        """Publishes the PWM for 'otbor tela'."""
+        try:
+            pwm_val = int(self.otbor_t_spinbox.value())
+            log_msg = f"Requesting otbor tela PWM={pwm_val}"
+            logger.info(log_msg)
+            self.publishRequested.emit(control_topics["otbor_t_new"], str(pwm_val))
+            self.update_status(f"Запрос ШИМ отбора тела: {pwm_val}%")
+        except Exception as e:
+            logger.error(f"Error preparing otbor tela PWM publication: {e}", exc_info=True)
+            self.update_status(f"Ошибка ШИМ отбора тела: {e}")
 
     def configure_plots(self):
         """Sets up the static parts of the plots and creates line objects."""
@@ -1082,6 +1122,38 @@ class AlcoEspMonitor(QMainWindow):
             self.flag_otb_label.setText(f"Флаг отбора: {flag_otb}")
         else:
             self.flag_otb_label.setText("Флаг отбора: -")
+
+        # Update current values for controls
+
+        otbor_g_1 = self.all_latest_values.get("otbor_g_1")
+        if otbor_g_1 is not None:
+            self.otbor_g_1_label.setText(f"ШИМ, % (сейчас {otbor_g_1}):")
+        else:
+            self.otbor_g_1_label.setText("ШИМ, %:")
+
+        term_c_max = self.all_latest_values.get("term_c_max")
+        if term_c_max is not None:
+            try:
+                self.term_c_max_telo_label.setText(f"T стоп, °C (сейчас {float(term_c_max):.1f}):")
+            except (ValueError, TypeError):
+                self.term_c_max_telo_label.setText(f"T стоп, °C (сейчас {term_c_max}):")
+        else:
+            self.term_c_max_telo_label.setText("T стоп, °C:")
+
+        term_c_min = self.all_latest_values.get("term_c_min")
+        if term_c_min is not None:
+            try:
+                self.term_c_min_telo_label.setText(f"T старт, °C (сейчас {float(term_c_min):.1f}):")
+            except (ValueError, TypeError):
+                self.term_c_min_telo_label.setText(f"T старт, °C (сейчас {term_c_min}):")
+        else:
+            self.term_c_min_telo_label.setText("T старт, °C:")
+
+        otbor_t = self.all_latest_values.get("otbor_t")
+        if otbor_t is not None:
+            self.otbor_t_label.setText(f"ШИМ, % (сейчас {otbor_t}):")
+        else:
+            self.otbor_t_label.setText("ШИМ, %:")
 
     def check_signal_conditions(self):
         """Checks the conditions and updates the signal labels."""
