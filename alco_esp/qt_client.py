@@ -76,7 +76,7 @@ timestamps = {key: deque(maxlen=window_size) for key in chart_temperature_topics
 # --- Default Settings for Signal Conditions ---
 DEFAULT_T_SIGNAL_KUB = 60.0  # °C
 DEFAULT_T_SIGNAL_DEFLEGMATOR = 70.0  # °C
-DEFAULT_DELTA_T = 0.1       # °C
+DEFAULT_DELTA_T = 0.2       # °C
 DEFAULT_PERIOD_SECONDS = 60 # seconds
 
 
@@ -445,7 +445,6 @@ class AlcoEspMonitor(QMainWindow):
 
         self.stability_signal_monitoring_active = True
         self.stability_signal_triggered = False
-        self.stability_condition_met_since = None
 
         # --- MQTT Data Tracking for Timeout ---
         self.last_mqtt_message_time = None
@@ -704,6 +703,7 @@ class AlcoEspMonitor(QMainWindow):
         self.t_kub_signal_label = QLabel("T куба: Ожидание...")
         self.t_kub_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.t_kub_signal_label.setAlignment(Qt.AlignCenter)
+        self.t_kub_signal_label.setWordWrap(True)
         controls_grid_layout.addWidget(self.t_kub_signal_label, row, 0, 1, 2)
         row += 1
         self.reset_t_kub_signal_button = QPushButton("Сброс сигнала T куба")
@@ -714,6 +714,7 @@ class AlcoEspMonitor(QMainWindow):
         self.t_deflegmator_signal_label = QLabel("T дефлегматора: Ожидание...")
         self.t_deflegmator_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.t_deflegmator_signal_label.setAlignment(Qt.AlignCenter)
+        self.t_deflegmator_signal_label.setWordWrap(True)
         controls_grid_layout.addWidget(self.t_deflegmator_signal_label, row, 0, 1, 2)
         row += 1
         self.reset_t_deflegmator_signal_button = QPushButton("Сброс сигнала T дефлегматора")
@@ -724,6 +725,7 @@ class AlcoEspMonitor(QMainWindow):
         self.stability_signal_label = QLabel("Стабильность T: Ожидание...")
         self.stability_signal_label.setStyleSheet("padding: 5px; border: 1px solid grey;")
         self.stability_signal_label.setAlignment(Qt.AlignCenter)
+        self.stability_signal_label.setWordWrap(True)
         controls_grid_layout.addWidget(self.stability_signal_label, row, 0, 1, 2)
         row += 1
         self.reset_stability_signal_button = QPushButton("Сброс сигнала ΔT")
@@ -739,7 +741,6 @@ class AlcoEspMonitor(QMainWindow):
         self.settings_button.clicked.connect(self.open_settings_dialog)
         controls_grid_layout.addWidget(self.settings_button, row, 0, 1, 2)
         row += 1
-
 
         self.controls_layout.addLayout(controls_grid_layout)
         self.controls_layout.addStretch(1)
@@ -1221,64 +1222,85 @@ class AlcoEspMonitor(QMainWindow):
         )
 
     def check_temperature_stability_signal(self):
-        """Checks the temperature stability signal condition and updates its label."""
-        term_k = self.all_latest_values.get("term_k")
-        term_c = self.all_latest_values.get("term_c")
+        """
+        Checks the temperature stability signal condition.
+        The signal triggers if the variation of dT = term_k - term_c is within a threshold over the last `period_seconds`.
+        """
+        now = datetime.now()
+        term_k_str = self.all_latest_values.get("term_k")
         delta_t_threshold = self.settings["delta_t"]
         period_seconds_threshold = self.settings["period_seconds"]
         TERM_K_70 = 70.0
-        logger.debug(f"Checking stability signal: term_k={term_k}, term_c={term_c}, delta_thresh={delta_t_threshold}, period_thresh={period_seconds_threshold}s, monitoring_active={self.stability_signal_monitoring_active}")
 
-        if self.stability_signal_monitoring_active: # Signal is armed and monitoring
-            logger.debug("Stability signal monitoring is active.")
-            if term_k is not None and term_c is not None:
-                term_k = float(term_k)
-                term_c = float(term_c)
-                delta = abs(term_k - term_c)
-                logger.debug(f"Stability signal: term_k={term_k}, term_c={term_c}, calculated_delta={delta:.2f}")
+        if not self.stability_signal_monitoring_active:
+            self.stability_signal_label.setText("ΔT: Мониторинг отключен")
+            self.stability_signal_label.setStyleSheet(STYLE_INACTIVE)
+            return
 
-                is_stable_condition = (delta < delta_t_threshold) and (term_k > TERM_K_70)
+        # Check T_kub threshold first
+        try:
+            term_k = float(term_k_str)
+            if term_k <= TERM_K_70:
+                message = f"ΔT: Мониторинг (Tк={term_k:.1f}°C ≤ {TERM_K_70:.1f}°C)"
+                self.stability_signal_label.setText(message)
+                self.stability_signal_label.setStyleSheet(STYLE_MONITORING)
+                return
+        except (TypeError, ValueError): # Catches None or non-float string
+            message = "ΔT: Ожидание данных Tк..."
+            self.stability_signal_label.setText(message)
+            self.stability_signal_label.setStyleSheet(STYLE_MONITORING)
+            return
 
-                if is_stable_condition: # Stability condition met
-                    logger.debug(f"Stability signal: Condition met (delta {delta:.2f} < threshold {delta_t_threshold:.2f} AND T_kub {term_k} > {TERM_K_70}).")
-                    if self.stability_condition_met_since is None:
-                        logger.info("Stability signal: Condition met for the first time, starting timer.")
-                        self.stability_condition_met_since = datetime.now()
-                    elapsed_seconds = (datetime.now() - self.stability_condition_met_since).total_seconds()
-                    logger.debug(f"Stability signal: Time elapsed since condition met: {elapsed_seconds:.0f}s.")
-                    if elapsed_seconds >= period_seconds_threshold: # Time condition also met - stability achieved
-                        logger.info(f"Stability signal TRIGGERED: Stable for {elapsed_seconds:.0f}s (>= {period_seconds_threshold}s).")
-                        self.stability_signal_triggered = True
-                        self.stability_signal_monitoring_active = False  # Deactivate after achieving (one-shot)
-                        message = f"ВНИМАНИЕ: СТАБИЛЬНО: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C и Tк > {TERM_K_70:.0f}°C в течение {elapsed_seconds:.0f}с"
-                        style_sheet = STYLE_ALARM_TRIGGERED
-                        self.alarm_message_with_sound(message)
-                    else: # Stability condition met, timer running
-                        logger.debug("Stability signal: Condition met, timer running.")
-                        message = f"Стабильно: ΔT ({delta:.2f}°C) < {delta_t_threshold:.2f}°C и Tк > {TERM_K_70:.0f}°C в течение {elapsed_seconds:.0f}с"
-                        style_sheet = STYLE_MONITORING
-                else:  # Stability condition NOT met, reset timer
-                    if self.stability_condition_met_since is not None: # Log only if timer was running
-                        logger.info("Stability signal: Condition no longer met, resetting timer.")
-                    self.stability_condition_met_since = None
+        # --- Data fetching and filtering ---
+        start_time = now - timedelta(seconds=period_seconds_threshold)
 
-                    if term_k <= TERM_K_70:
-                        message = f"ΔT: Мониторинг (Tк={term_k:.1f}°C ≤ {TERM_K_70:.0f}°C)"
-                    else: # delta condition failed
-                        message = f"ΔT: Мониторинг (ΔT={delta:.2f}°C, порог ΔT < {delta_t_threshold:.2f}°C)"
-                    style_sheet = STYLE_MONITORING
-            else:  # Not enough data (term_k or term_c is None)
-                logger.debug("Stability signal: Waiting for term_k and/or term_c data.")
-                if self.stability_condition_met_since is not None: # Log only if timer was running
-                    logger.info("Stability signal: Data became unavailable, resetting timer.")
-                self.stability_condition_met_since = None # Reset timer if data becomes unavailable
-                message = "ΔT: Ожидание данных Tк/Tц..."
-                style_sheet = STYLE_MONITORING # Still monitoring, just waiting for data
+        def get_windowed_data(ts_deque, data_deque, start_time):
+            """Efficiently gets data points from within a time window from the end of a deque."""
+            # Iterate from the right (most recent) to find where the window starts
+            for i in range(len(ts_deque) - 1, -1, -1):
+                if ts_deque[i] < start_time:
+                    start_index = i + 1
+                    break
+            else: # If loop completes, all data is in window
+                start_index = 0
+            # Create a list only from the relevant slice of the deque
+            return [data_deque[i] for i in range(start_index, len(data_deque))]
+
+        k_data_window = get_windowed_data(timestamps['term_k'], data['term_k'], start_time)
+        c_data_window = get_windowed_data(timestamps['term_c'], data['term_c'], start_time)
+
+        # Per user instruction: "считать, что N последних измерений куба соответствуют N последним измерениям царги"
+        num_pairs = min(len(k_data_window), len(c_data_window))
+
+        if num_pairs < 2:
+            message = f"ΔT: Мониторинг (Мало данных: {num_pairs} пар за {period_seconds_threshold}с)"
+            self.stability_signal_label.setText(message)
+            self.stability_signal_label.setStyleSheet(STYLE_MONITORING)
+            return
+
+        # Pair up from the most recent data points.
+        k_recent = k_data_window[-num_pairs:]
+        c_recent = c_data_window[-num_pairs:]
+        
+        dts_in_window = [k - c for k, c in zip(k_recent, c_recent)]
+
+        variation = max(dts_in_window) - min(dts_in_window)
+        avg_dT = sum(dts_in_window) / len(dts_in_window)
+
+        if variation <= delta_t_threshold:
+            # Stability condition met! Trigger the alarm.
+            self.stability_signal_triggered = True
+            self.stability_signal_monitoring_active = False  # One-shot signal
+            
+            message = (f"ВНИМАНИЕ: СТАБИЛЬНО: разброс ΔT ({variation:.2f}°C) ≤ {delta_t_threshold:.2f}°C "
+                       f"за {period_seconds_threshold}с (средняя ΔT={avg_dT:.2f}°C)")
+            style_sheet = STYLE_ALARM_TRIGGERED
+            self.alarm_message_with_sound(message)
         else:
-            logger.debug("Stability signal monitoring is NOT active.")
-            message = f"ΔT: Мониторинг отключен"
-            style_sheet = STYLE_INACTIVE
-
+            # Condition not met: variation is too high
+            message = f"ΔT: Мониторинг (Разброс={variation:.2f}°C, порог {delta_t_threshold:.2f}°C, средняя ΔT={avg_dT:.2f}°C)"
+            style_sheet = STYLE_MONITORING
+        
         self.stability_signal_label.setText(message)
         self.stability_signal_label.setStyleSheet(style_sheet)
 
@@ -1301,7 +1323,6 @@ class AlcoEspMonitor(QMainWindow):
     def reset_stability_signal(self, inform=True):
         self.stability_signal_monitoring_active = True
         self.stability_signal_triggered = False
-        self.stability_condition_met_since = None
         log_msg = "Сигнал стабильности температур сброшен и активирован."
         logger.info(log_msg)
         if inform: self.update_status(log_msg)
