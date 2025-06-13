@@ -10,7 +10,7 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel,
                              QGridLayout, QHBoxLayout, QDoubleSpinBox, QPushButton,
                              QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox, QComboBox,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea)
+                             QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QFrame)
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot, QTimer, Qt, QUrl
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtMultimedia import QSoundEffect
@@ -221,7 +221,6 @@ class AllDataViewerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Все данные от устройства")
         self.setModal(False)
-        self.setGeometry(200, 200, 500, 700)
 
         layout = QVBoxLayout(self)
 
@@ -238,6 +237,8 @@ class AllDataViewerDialog(QDialog):
 
         layout.addWidget(self.table)
         self.update_data(data_dict)
+
+        self.adjustSize()  # Adjust to content width
 
     def open_log_folder(self):
         log_dir = os.path.join(APP_ROOT_DIR, "log")
@@ -447,7 +448,7 @@ class AlcoEspMonitor(QMainWindow):
         self.stability_condition_met_since = None
 
         # --- MQTT Data Tracking for Timeout ---
-        self.last_mqtt_message_time = datetime.now() # Initialize to app start time
+        self.last_mqtt_message_time = None
         self.mqtt_data_timeout_alarm_active = False  # Flag to track if "no data" alarm is shown
 
         # --- Initialize Sound Effect and Alarm Dialog (placeholder, actual init deferred) ---
@@ -464,13 +465,15 @@ class AlcoEspMonitor(QMainWindow):
 
         # --- Left Controls Panel ---
         self.controls_widget = QWidget()
+        self.controls_widget.setFixedWidth(380)
         self.controls_layout = QVBoxLayout(self.controls_widget)
 
         # --- Wrap controls_widget in a QScrollArea ---
         self.controls_scroll_area = QScrollArea()
         self.controls_scroll_area.setWidgetResizable(True)
+        self.controls_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.controls_scroll_area.setWidget(self.controls_widget)
-        self.controls_scroll_area.setMinimumWidth(400)
+        self.controls_scroll_area.setFixedWidth(400)
 
         self.main_layout.addWidget(self.controls_scroll_area)
 
@@ -575,34 +578,53 @@ class AlcoEspMonitor(QMainWindow):
         controls_grid_layout.addWidget(self.all_data_button, row, 1, 1, 1)
         row += 1
 
-        self.term_d_label = QLabel("T дефлегматор: -")
-        self.term_d_label.setStyleSheet("padding: 2px;")
-        controls_grid_layout.addWidget(self.term_d_label, row, 0, 1, 2)
+        self.last_update_time_label = QLabel("Последнее сообщение от устройства: -")
+        self.last_update_time_label.setStyleSheet("padding: 2px; font-style: italic;")
+        controls_grid_layout.addWidget(self.last_update_time_label, row, 0, 1, 2)
         row += 1
 
+        # --- Grouped parameter display ---
+        params_layout = QHBoxLayout()
+        
+        # Left column (Temperatures)
+        temps_layout = QVBoxLayout()
+        self.term_d_label = QLabel("T дефл.: -")
+        self.term_d_label.setStyleSheet("padding: 2px;")
+        temps_layout.addWidget(self.term_d_label)
+        
         self.term_c_label = QLabel("T царга: -")
         self.term_c_label.setStyleSheet("padding: 2px;")
-        controls_grid_layout.addWidget(self.term_c_label, row, 0, 1, 2)
-        row += 1
-
+        temps_layout.addWidget(self.term_c_label)
+        
         self.term_k_label = QLabel("T куб: -")
         self.term_k_label.setStyleSheet("padding: 2px;")
-        controls_grid_layout.addWidget(self.term_k_label, row, 0, 1, 2)
-        row += 1
-
+        temps_layout.addWidget(self.term_k_label)
+        temps_layout.addStretch()
+        params_layout.addLayout(temps_layout)
+        
+        # Vertical Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        params_layout.addWidget(separator)
+        
+        # Right column (Other params)
+        other_params_layout = QVBoxLayout()
         self.power_label = QLabel("Мощность: -")
         self.power_label.setStyleSheet("padding: 2px;")
-        controls_grid_layout.addWidget(self.power_label, row, 0, 1, 2)
-        row += 1
-
-        self.press_a_label = QLabel("Атм. давление: -")
+        other_params_layout.addWidget(self.power_label)
+        
+        self.press_a_label = QLabel("Атм. давл.: -")
         self.press_a_label.setStyleSheet("padding: 2px;")
-        controls_grid_layout.addWidget(self.press_a_label, row, 0, 1, 2)
-        row += 1
-
+        other_params_layout.addWidget(self.press_a_label)
+        
         self.flag_otb_label = QLabel("Флаг отбора: -")
         self.flag_otb_label.setStyleSheet("padding: 2px;")
-        controls_grid_layout.addWidget(self.flag_otb_label, row, 0, 1, 2)
+        other_params_layout.addWidget(self.flag_otb_label)
+        other_params_layout.addStretch()
+        params_layout.addLayout(other_params_layout)
+        
+        controls_grid_layout.addLayout(params_layout, row, 0, 1, 2)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
@@ -724,10 +746,26 @@ class AlcoEspMonitor(QMainWindow):
 
     def open_all_data_viewer(self):
         if self.all_data_viewer_dialog is None:
-            # Create and show the dialog
+            # Create the dialog
             self.all_data_viewer_dialog = AllDataViewerDialog(self.all_latest_values, self)
             # When the dialog is closed (e.g., by the user), reset our reference to it.
             self.all_data_viewer_dialog.finished.connect(lambda: setattr(self, 'all_data_viewer_dialog', None))
+
+            # --- Custom positioning and sizing ---
+            main_window_geom = self.geometry()
+            controls_geom = self.controls_scroll_area.geometry()
+
+            # Calculate new geometry for the dialog
+            dialog_width = int(self.all_data_viewer_dialog.width() * 1.1)
+            dialog_height = int(main_window_geom.height() * 0.9)
+            
+            # Position X: a bit to the right of the control panel
+            dialog_x = main_window_geom.x() + controls_geom.width() + 50
+            
+            # Position Y: vertically centered relative to the main window
+            dialog_y = main_window_geom.y() + (main_window_geom.height() - dialog_height) // 2
+
+            self.all_data_viewer_dialog.setGeometry(dialog_x, dialog_y, dialog_width, dialog_height)
             self.all_data_viewer_dialog.show()
         else:
             # If it already exists, just bring it to the front
@@ -1005,11 +1043,14 @@ class AlcoEspMonitor(QMainWindow):
     def update_text_displays(self):
         """Updates text labels with latest values."""
 
+        if self.last_mqtt_message_time:
+            self.last_update_time_label.setText(f"Последнее сообщение от устройства: {self.last_mqtt_message_time.strftime('%H:%M:%S')}")
+
         term_d = self.all_latest_values.get("term_d")
         if term_d is not None:
-            self.term_d_label.setText(f"T дефлегматор: {float(term_d):.1f} °C")
+            self.term_d_label.setText(f"T дефл.: {float(term_d):.1f} °C")
         else:
-            self.term_d_label.setText("T дефлегматор: -")
+            self.term_d_label.setText("T дефл.: -")
         
         term_c = self.all_latest_values.get("term_c")
         if term_c is not None:
@@ -1019,7 +1060,7 @@ class AlcoEspMonitor(QMainWindow):
 
         term_k = self.all_latest_values.get("term_k")
         if term_k is not None:
-            self.term_k_label.setText(f"T куб: {float(term_k):.1f} °C")
+            self.term_k_label.setText(f"T куб:     {float(term_k):.1f} °C")
         else:
             self.term_k_label.setText("T куб: -")
 
@@ -1031,9 +1072,9 @@ class AlcoEspMonitor(QMainWindow):
 
         press_a = self.all_latest_values.get("press_a")
         if press_a is not None:
-            self.press_a_label.setText(f"Атм. давление: {float(press_a):.1f} мм.рт.ст")
+            self.press_a_label.setText(f"Атм. давл.: {float(press_a):.1f} мм.рт.ст")
         else:
-            self.press_a_label.setText("Атм. давление: -")
+            self.press_a_label.setText("Атм. давл.: -")
 
         flag_otb = self.all_latest_values.get("flag_otb")
         if flag_otb is not None:
