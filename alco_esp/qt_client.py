@@ -177,6 +177,45 @@ class SettingsDialog(QDialog):
         }
 
 
+class CustomNavigationToolbar(NavigationToolbar):
+    def __init__(self, canvas, parent, timestamps_ref):
+        super().__init__(canvas, parent)
+        self.timestamps_ref = timestamps_ref
+
+    def home(self, *args):
+        """Overrides the default home button behavior to zoom to full data range
+        and re-enable auto-scrolling."""
+        logger.debug("Custom 'Home' button pressed. Resetting view to full data range and enabling autoscroll.")
+        ax = self.canvas.figure.axes[0]
+
+        all_times = [t for topic_times in self.timestamps_ref.values() for t in topic_times if topic_times]
+        if all_times:
+            min_time = min(all_times)
+            max_time = max(all_times)
+            if min_time == max_time:
+                max_time = max_time + timedelta(seconds=10)
+            else:
+                time_range = max_time - min_time
+                max_time = max_time + time_range * 0.05
+                min_time = min_time - time_range * 0.01
+            ax.set_xlim(min_time, max_time)
+            logger.debug(f"Home button: setting xlim to ({min_time}, {max_time})")
+        else:
+            now = datetime.now()
+            ax.set_xlim(now - timedelta(seconds=60), now)
+
+        # Reset Y-axis to default view
+        ax.set_ylim(10, 110)
+
+        # Re-enable autoscale on the x-axis so the plot continues to scroll
+        ax.set_autoscalex_on(True)
+
+        # Tell the toolbar that this is the new "home" view.
+        # This clears the zoom history and sets the current view as the base.
+        self.update()
+        self.canvas.draw()
+
+
 class AllDataViewerDialog(QDialog):
     def __init__(self, data_dict, parent=None):
         super().__init__(parent)
@@ -446,7 +485,7 @@ class AlcoEspMonitor(QMainWindow):
         plt.style.use('seaborn-v0_8-darkgrid')
         self.figure, self.ax = plt.subplots(1, 1, figsize=(10, 6)) # Single plot
         self.canvas = FigureCanvas(self.figure)
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        self.toolbar = CustomNavigationToolbar(self.canvas, self, timestamps)
 
         self.plot_layout.addWidget(self.toolbar)
         self.plot_layout.addWidget(self.canvas, 1)
@@ -903,6 +942,7 @@ class AlcoEspMonitor(QMainWindow):
 
     def update_plots(self):
         """Updates the Matplotlib plots with the latest data."""
+        logger.debug("Updating plots...")
         # --- Update Temperature Data and legend ---
         for key in ["term_c", "term_k", "term_d"]:
             if key in self.lines:
@@ -924,7 +964,9 @@ class AlcoEspMonitor(QMainWindow):
         # The 'Home' button on the toolbar will re-enable it, and this logic will
         # then take over again.
         if self.ax.get_autoscalex_on():
+            logger.debug("Autoscalex is ON. Rescaling view.")
             self.ax.autoscale_view(scalex=True, scaley=False) # autoscale X, but not Y
+            self.ax.set_ylim(10, 110) # Ensure Y-axis is fixed during autoscroll
 
             # Adjust x-axis limits based on the actual time range present in the data
             all_times = [t for topic_times in timestamps.values() for t in topic_times if topic_times] # Filter empty
@@ -933,8 +975,11 @@ class AlcoEspMonitor(QMainWindow):
                 max_time = max(all_times)
                 # Add a small buffer to max_time if only one point, or if window is small
                 if min_time == max_time:
-                    max_time = min_time + timedelta(seconds=10) # Show a 10s window for single point
-
+                    max_time = max_time + timedelta(seconds=10) # Show a 10s window for single point
+                else:
+                    time_range = max_time - min_time
+                    max_time = max_time + time_range * 0.05
+                    min_time = min_time - time_range * 0.01
                 self.ax.set_xlim(min_time, max_time)
                 self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
                 self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=7)) # Fewer ticks
@@ -945,6 +990,9 @@ class AlcoEspMonitor(QMainWindow):
 
             # set_xlim turns autoscale off, so we re-enable it to remember we are in auto mode.
             self.ax.set_autoscalex_on(True)
+        
+        else:
+            logger.debug("Autoscalex is OFF. Skipping view rescale.")
 
         self.ax.legend(loc='upper left')
 
