@@ -593,7 +593,7 @@ class AlcoEspMonitor(QMainWindow):
         row += 1
         controls_grid_layout.addWidget(QLabel("Скорость (ШИМ, %):"), row, 0)
         self.otbor_g_1_spinbox = QDoubleSpinBox()
-        self.otbor_g_1_spinbox.setRange(0, 100) # PWM in %
+        self.otbor_g_1_spinbox.setRange(0, 99) # PWM in %
         self.otbor_g_1_spinbox.setDecimals(0)
         controls_grid_layout.addWidget(self.otbor_g_1_spinbox, row, 1)
         row += 1
@@ -624,7 +624,7 @@ class AlcoEspMonitor(QMainWindow):
         row += 1
         controls_grid_layout.addWidget(QLabel("ШИМ отбора тела (%):"), row, 0)
         self.otbor_t_spinbox = QDoubleSpinBox()
-        self.otbor_t_spinbox.setRange(0, 100) # PWM in %
+        self.otbor_t_spinbox.setRange(0, 99) # PWM in %
         self.otbor_t_spinbox.setDecimals(0)
         controls_grid_layout.addWidget(self.otbor_t_spinbox, row, 1)
         row += 1
@@ -856,7 +856,12 @@ class AlcoEspMonitor(QMainWindow):
 
         # --- CSV Logging for all the device data  ---
         try:
-            all_data_logger.info(f"{time_str};{topic};{payload_str}")
+            try:
+                # Format numeric values in scientific notation for locale-independent import
+                payload_to_log = f"{float(payload_str):.6e}"
+            except (ValueError, TypeError):
+                payload_to_log = payload_str
+            all_data_logger.info(f"{time_str};{topic};{payload_to_log}")
         except Exception as e:
             logger.error(f"Failed to write to all_data.csv for topic {topic}: {e}", exc_info=True)
 
@@ -865,7 +870,14 @@ class AlcoEspMonitor(QMainWindow):
             try:
                 values = [''] * len(CSV_DATA_TOPIC_ORDER)
                 idx = CSV_DATA_TOPIC_ORDER.index(topic)
-                values[idx] = payload_str
+
+                try:
+                    # Format numeric values in scientific notation for locale-independent import
+                    value_to_log = f"{float(payload_str):.6e}"
+                except (ValueError, TypeError):
+                    value_to_log = payload_str
+                
+                values[idx] = value_to_log
                 log_line = f"{time_str};" + ";".join(values)
                 main_data_logger.info(log_line)
             except Exception as e:
