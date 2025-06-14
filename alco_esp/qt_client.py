@@ -78,6 +78,8 @@ DEFAULT_T_SIGNAL_DEFLEGMATOR = 70.0  # °C
 DEFAULT_DELTA_T = 0.2       # °C
 DEFAULT_PERIOD_SECONDS = 60 # seconds
 DEFAULT_TEMP_STOP_RAZGON = 70.0  # °C
+DEFAULT_CHART_Y_MIN = 10.0
+DEFAULT_CHART_Y_MAX = 110.0
 
 
 def load_secrets_with_gui_feedback():
@@ -127,36 +129,79 @@ def load_secrets_with_gui_feedback():
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, current_settings=None):
         super().__init__(parent)
-        self.setWindowTitle("Настройки сигналов")
+        self.setWindowTitle("Настройки")
         self.setModal(True)
         layout = QFormLayout(self)
+        layout.setRowWrapPolicy(QFormLayout.WrapAllRows)
+
+        # --- Сигналы ---
+        heading_signals = QLabel("<b>Сигналы</b>")
+        heading_signals.setAlignment(Qt.AlignCenter)
+        layout.addRow(heading_signals)
 
         self.t_signal_kub_spinbox = QDoubleSpinBox()
         self.t_signal_kub_spinbox.setRange(0.0, 100.0)
         self.t_signal_kub_spinbox.setDecimals(1)
         self.t_signal_kub_spinbox.setSingleStep(0.1)
         self.t_signal_kub_spinbox.setValue(current_settings.get("t_signal_kub", DEFAULT_T_SIGNAL_KUB))
-        layout.addRow("T порог срабатывания по T куба (°C):", self.t_signal_kub_spinbox)
+        layout.addRow("Порог сигнала T куба (°C):", self.t_signal_kub_spinbox)
 
         self.t_signal_deflegmator_spinbox = QDoubleSpinBox()
         self.t_signal_deflegmator_spinbox.setRange(0.0, 100.0)
         self.t_signal_deflegmator_spinbox.setDecimals(1)
         self.t_signal_deflegmator_spinbox.setSingleStep(0.1)
-        self.t_signal_deflegmator_spinbox.setValue(current_settings.get("t_signal_deflegmator", DEFAULT_T_SIGNAL_DEFLEGMATOR))
-        layout.addRow("T порог срабатывания по T дефлегматора (°C):", self.t_signal_deflegmator_spinbox)
+        self.t_signal_deflegmator_spinbox.setValue(
+            current_settings.get("t_signal_deflegmator", DEFAULT_T_SIGNAL_DEFLEGMATOR))
+        layout.addRow("Порог сигнала T дефлегматора (°C):", self.t_signal_deflegmator_spinbox)
+
+        heading_temp_signal = QLabel("<b>Сигнал стабильности температуры</b>")
+        heading_temp_signal.setAlignment(Qt.AlignCenter)
+        layout.addRow(heading_temp_signal)
 
         self.delta_t_spinbox = QDoubleSpinBox()
         self.delta_t_spinbox.setRange(0.01, 10.0)
         self.delta_t_spinbox.setDecimals(2)
-        self.delta_t_spinbox.setSingleStep(0.1)
+        self.delta_t_spinbox.setSingleStep(0.01)
         self.delta_t_spinbox.setValue(current_settings.get("delta_t", DEFAULT_DELTA_T))
-        layout.addRow("Delta T для стабильности (°C):", self.delta_t_spinbox)
+        layout.addRow("Порог разброса ΔT <i>(max(ΔT) - min(ΔT))</i> за период (°C):", self.delta_t_spinbox)
 
-        self.period_spinbox = QDoubleSpinBox() # Using QDoubleSpinBox for consistency, could be QSpinBox
-        self.period_spinbox.setRange(1.0, 3600.0) # Seconds
+        self.period_spinbox = QDoubleSpinBox()  # Using QDoubleSpinBox for consistency, could be QSpinBox
+        self.period_spinbox.setRange(1.0, 3600.0)  # Seconds
         self.period_spinbox.setDecimals(0)
         self.period_spinbox.setValue(current_settings.get("period_seconds", DEFAULT_PERIOD_SECONDS))
-        layout.addRow("Период стабильности (секунд):", self.period_spinbox)
+        layout.addRow("Период оценки разброса ΔT (с):", self.period_spinbox)
+
+        # --- Разгон ---
+        heading_razgon = QLabel("<b>Разгон</b>")
+        heading_razgon.setAlignment(Qt.AlignCenter)
+        layout.addRow(heading_razgon)
+
+        self.temp_stop_razgon_spinbox = QDoubleSpinBox()
+        self.temp_stop_razgon_spinbox.setRange(0.0, 100.0)
+        self.temp_stop_razgon_spinbox.setDecimals(1)
+        self.temp_stop_razgon_spinbox.setSingleStep(0.1)
+        self.temp_stop_razgon_spinbox.setValue(current_settings.get("temp_stop_razgon", DEFAULT_TEMP_STOP_RAZGON))
+        layout.addRow("Температура остановки разгона куба (°C):", self.temp_stop_razgon_spinbox)
+
+        # --- График ---
+        heading_chart = QLabel("<b>График</b>")
+        heading_chart.setAlignment(Qt.AlignCenter)
+        layout.addRow(heading_chart)
+
+        self.chart_y_min_spinbox = QDoubleSpinBox()
+        self.chart_y_min_spinbox.setRange(-50.0, 200.0)
+        self.chart_y_min_spinbox.setDecimals(0)
+        self.chart_y_min_spinbox.setSingleStep(1.0)
+        self.chart_y_min_spinbox.setValue(current_settings.get("chart_y_min", DEFAULT_CHART_Y_MIN))
+        layout.addRow("Пределы температур на графике, мин (°C):", self.chart_y_min_spinbox)
+
+        self.chart_y_max_spinbox = QDoubleSpinBox()
+        self.chart_y_max_spinbox.setRange(-50.0, 200.0)
+        self.chart_y_max_spinbox.setDecimals(0)
+        self.chart_y_max_spinbox.setSingleStep(1.0)
+        self.chart_y_max_spinbox.setValue(current_settings.get("chart_y_max", DEFAULT_CHART_Y_MAX))
+        layout.addRow("Пределы температур на графике, макс (°C):", self.chart_y_max_spinbox)
+
 
         self.buttons_layout = QHBoxLayout()
         self.ok_button = QPushButton("OK")
@@ -173,7 +218,10 @@ class SettingsDialog(QDialog):
             "t_signal_kub": self.t_signal_kub_spinbox.value(),
             "t_signal_deflegmator": self.t_signal_deflegmator_spinbox.value(),
             "delta_t": self.delta_t_spinbox.value(),
-            "period_seconds": int(self.period_spinbox.value())
+            "period_seconds": int(self.period_spinbox.value()),
+            "temp_stop_razgon": self.temp_stop_razgon_spinbox.value(),
+            "chart_y_min": self.chart_y_min_spinbox.value(),
+            "chart_y_max": self.chart_y_max_spinbox.value()
         }
 
 
@@ -205,7 +253,7 @@ class CustomNavigationToolbar(NavigationToolbar):
             ax.set_xlim(now - timedelta(seconds=60), now)
 
         # Reset Y-axis to default view
-        ax.set_ylim(10, 110)
+        ax.set_ylim(self.parent.settings["chart_y_min"], self.parent.settings["chart_y_max"])
 
         # Re-enable autoscale on the x-axis so the plot continues to scroll
         ax.set_autoscalex_on(True)
@@ -429,7 +477,10 @@ class AlcoEspMonitor(QMainWindow):
             "t_signal_kub": DEFAULT_T_SIGNAL_KUB,
             "t_signal_deflegmator": DEFAULT_T_SIGNAL_DEFLEGMATOR,
             "delta_t": DEFAULT_DELTA_T,
-            "period_seconds": DEFAULT_PERIOD_SECONDS
+            "period_seconds": DEFAULT_PERIOD_SECONDS,
+            "temp_stop_razgon": DEFAULT_TEMP_STOP_RAZGON,
+            "chart_y_min": DEFAULT_CHART_Y_MIN,
+            "chart_y_max": DEFAULT_CHART_Y_MAX
         }
 
         # --- Storage for all device data ---
@@ -637,12 +688,12 @@ class AlcoEspMonitor(QMainWindow):
         row += 1
 
         self.work_mode_label = QLabel("Режим работы:")
-        controls_grid_layout.addWidget(self.work_mode_label, row, 0, 1, 4)
+        controls_grid_layout.addWidget(self.work_mode_label, row, 0, 1, 3)
         self.work_mode_combobox = QComboBox()
         self.work_mode_combobox.addItem("Выбрать", userData=None)
         for code, name in sorted(WORK_STATE_NAMES.items()):
             self.work_mode_combobox.addItem(f"{name} ({code})", userData=code)
-        controls_grid_layout.addWidget(self.work_mode_combobox, row, 4, 1, 1)
+        controls_grid_layout.addWidget(self.work_mode_combobox, row, 3, 1, 2)
 
         self.set_work_mode_button = QPushButton("Установить")
         self.set_work_mode_button.clicked.connect(self.publish_selected_work_mode)
@@ -757,7 +808,7 @@ class AlcoEspMonitor(QMainWindow):
         row +=1
 
         # --- Settings Button ---
-        self.settings_button = QPushButton("Настройки сигналов")
+        self.settings_button = QPushButton("Настройки")
         self.settings_button.clicked.connect(self.open_settings_dialog)
         controls_grid_layout.addWidget(self.settings_button, row, 0, 1, 6)
         row += 1
@@ -796,43 +847,37 @@ class AlcoEspMonitor(QMainWindow):
     def open_settings_dialog(self):
         dialog = SettingsDialog(self, self.settings)
         # Store old settings for comparison
-        old_t_signal_kub = self.settings.get("t_signal_kub")
-        old_t_signal_deflegmator = self.settings.get("t_signal_deflegmator")
-        old_delta_t = self.settings.get("delta_t")
-        old_period_seconds = self.settings.get("period_seconds")
+        old_settings = self.settings.copy()
 
         if dialog.exec_() == QDialog.Accepted:
             self.settings = dialog.get_settings()
-            log_msg = f"Settings updated: T_kub_sig={self.settings['t_signal_kub']}, T_def_sig={self.settings['t_signal_deflegmator']}, DeltaT={self.settings['delta_t']}, Period={self.settings['period_seconds']}s"
+            log_msg = f"Settings updated: {self.settings}"
             logger.info(log_msg)
-            self.update_status(log_msg) # update_status will also log this
+            self.update_status("Настройки обновлены.") # User-friendly status
 
-            # Reset signals only if their relevant settings changed
-            new_t_signal_kub = self.settings.get("t_signal_kub")
-            new_t_signal_deflegmator = self.settings.get("t_signal_deflegmator")
-            new_delta_t = self.settings.get("delta_t")
-            new_period_seconds = self.settings.get("period_seconds")
-
-            t_kub_setting_changed = (old_t_signal_kub != new_t_signal_kub)
-            t_deflegmator_setting_changed = (old_t_signal_deflegmator != new_t_signal_deflegmator)
-            stability_settings_changed = (old_delta_t != new_delta_t or
-                                          old_period_seconds != new_period_seconds)
-
-            if t_kub_setting_changed:
-                logger.info(f"T_signal_kub setting changed from {old_t_signal_kub} to {new_t_signal_kub}. Resetting T kub signal.")
+            # Reset signals or update components only if relevant settings changed
+            if old_settings["t_signal_kub"] != self.settings["t_signal_kub"]:
+                logger.info(f"T_signal_kub setting changed. Resetting T kub signal.")
                 self.reset_t_kub_signal(inform=False) # silent reset
-            
-            if t_deflegmator_setting_changed:
-                logger.info(f"T_signal_deflegmator setting changed from {old_t_signal_deflegmator} to {new_t_signal_deflegmator}. Resetting T deflegmator signal.")
+
+            if old_settings["t_signal_deflegmator"] != self.settings["t_signal_deflegmator"]:
+                logger.info(f"T_signal_deflegmator setting changed. Resetting T deflegmator signal.")
                 self.reset_t_deflegmator_signal(inform=False) # silent reset
-            
-            if stability_settings_changed:
-                logger.info(f"Stability settings changed (DeltaT: {old_delta_t}->{new_delta_t}, Period: {old_period_seconds}->{new_period_seconds}). Resetting stability signal.")
+
+            if (old_settings["delta_t"] != self.settings["delta_t"] or
+                    old_settings["period_seconds"] != self.settings["period_seconds"]):
+                logger.info(f"Stability settings changed. Resetting stability signal.")
                 self.reset_stability_signal(inform=False) # silent reset
-            
-            # Re-evaluate with new settings immediately if active,
-            # or if signals were reset.
-            self.check_signal_conditions()
+
+            chart_limits_changed = (old_settings["chart_y_min"] != self.settings["chart_y_min"] or
+                                    old_settings["chart_y_max"] != self.settings["chart_y_max"])
+            if chart_limits_changed:
+                logger.info("Chart Y-axis limits changed. Redrawing plot.")
+                # We can call update_plots_and_signals, which will handle it all
+                self.update_plots_and_signals()
+            else:
+                # If only signal settings changed, we still need to re-evaluate them.
+                self.check_signal_conditions()
 
     def publish_selected_work_mode(self):
         mode_code = self.work_mode_combobox.currentData()
@@ -855,9 +900,10 @@ class AlcoEspMonitor(QMainWindow):
                 значение температуры в кубе, при которой нужно закончить разгон. 
                 Потом включить разгон в плитке «work».
                 """
-                logger.info(f"Requesting to set term_k_r: {DEFAULT_TEMP_STOP_RAZGON}")
-                self.publishRequested.emit("term_k_r", str(DEFAULT_TEMP_STOP_RAZGON))
-                self.update_status(f"Запрос на установку температуры разгона куба term_k_r: {DEFAULT_TEMP_STOP_RAZGON}")
+                temp_stop_razgon = self.settings['temp_stop_razgon']
+                logger.info(f"Requesting to set term_k_r: {temp_stop_razgon}")
+                self.publishRequested.emit("term_k_r", str(temp_stop_razgon))
+                self.update_status(f"Запрос на установку температуры разгона куба term_k_r: {temp_stop_razgon}")
 
             mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
             logger.info(f"Requesting to set work mode: {mode_name} ({mode_code})")
@@ -920,7 +966,7 @@ class AlcoEspMonitor(QMainWindow):
         self.ax.clear() # Clear existing axes
         self.ax.set_title("Температуры")
         self.ax.set_ylabel("°C")
-        self.ax.set_ylim(10, 110)
+        self.ax.set_ylim(self.settings["chart_y_min"], self.settings["chart_y_max"])
         
         self.base_line_labels = {
             "term_c": "T царга (term_c)",
@@ -1057,7 +1103,7 @@ class AlcoEspMonitor(QMainWindow):
         if self.ax.get_autoscalex_on():
             logger.debug("Autoscalex is ON. Rescaling view.")
             self.ax.autoscale_view(scalex=True, scaley=False) # autoscale X, but not Y
-            self.ax.set_ylim(10, 110) # Ensure Y-axis is fixed during autoscroll
+            self.ax.set_ylim(self.settings["chart_y_min"], self.settings["chart_y_max"]) # Ensure Y-axis is fixed during autoscroll
 
             # Adjust x-axis limits based on the actual time range present in the data
             all_times = [t for topic_times in timestamps.values() for t in topic_times if topic_times] # Filter empty
@@ -1139,31 +1185,31 @@ class AlcoEspMonitor(QMainWindow):
 
         otbor_g_1 = self.all_latest_values.get("otbor_g_1")
         if otbor_g_1 is not None:
-            self.otbor_g_1_label.setText(f"ШИМ, % (сейчас {otbor_g_1}):")
+            self.otbor_g_1_label.setText(f"ШИМ, % (сейчас <b>{otbor_g_1}</b>):")
         else:
             self.otbor_g_1_label.setText("ШИМ, %:")
 
         term_c_max = self.all_latest_values.get("term_c_max")
         if term_c_max is not None:
             try:
-                self.term_c_max_telo_label.setText(f"T стоп, °C (сейчас {float(term_c_max):.1f}):")
+                self.term_c_max_telo_label.setText(f"T стоп, °C (сейчас <b>{float(term_c_max):.1f}</b>):")
             except (ValueError, TypeError):
-                self.term_c_max_telo_label.setText(f"T стоп, °C (сейчас {term_c_max}):")
+                self.term_c_max_telo_label.setText(f"T стоп, °C (сейчас <b>{term_c_max}</b>):")
         else:
             self.term_c_max_telo_label.setText("T стоп, °C:")
 
         term_c_min = self.all_latest_values.get("term_c_min")
         if term_c_min is not None:
             try:
-                self.term_c_min_telo_label.setText(f"T старт, °C (сейчас {float(term_c_min):.1f}):")
+                self.term_c_min_telo_label.setText(f"T старт, °C (сейчас <b>{float(term_c_min):.1f}</b>):")
             except (ValueError, TypeError):
-                self.term_c_min_telo_label.setText(f"T старт, °C (сейчас {term_c_min}):")
+                self.term_c_min_telo_label.setText(f"T старт, °C (сейчас <b>{term_c_min}</b>):")
         else:
             self.term_c_min_telo_label.setText("T старт, °C:")
 
         otbor_t = self.all_latest_values.get("otbor_t")
         if otbor_t is not None:
-            self.otbor_t_label.setText(f"ШИМ, % (сейчас {otbor_t}):")
+            self.otbor_t_label.setText(f"ШИМ, % (сейчас <b>{otbor_t}</b>):")
         else:
             self.otbor_t_label.setText("ШИМ, %:")
 
