@@ -273,7 +273,7 @@ class AlcoEspMonitor(QMainWindow):
         controls_grid_layout.addWidget(self.set_work_mode_button, row, 5, 1, 1)
         row += 1
 
-        self.term_k_m_label = QLabel("T куба для остановки разгона: -")
+        self.term_k_m_label = QLabel("Остановка разгона при T куба: -")
         self.term_k_m_label.setStyleSheet("padding: 2px;")
         controls_grid_layout.addWidget(self.term_k_m_label, row, 0, 1, 6)
         row += 1
@@ -852,11 +852,11 @@ class AlcoEspMonitor(QMainWindow):
         term_k_m = self.all_latest_values.get("term_k_m")
         if term_k_m is not None:
             try:
-                self.term_k_m_label.setText(f"T куба для остановки разгона: <b>{float(term_k_m):.1f}°C</b>")
+                self.term_k_m_label.setText(f"Остановка разгона при T куба: <b>{float(term_k_m):.1f}°C</b>")
             except (ValueError, TypeError):
-                self.term_k_m_label.setText(f"T куба для остановки разгона: <b>{term_k_m}</b>")
+                self.term_k_m_label.setText(f"Остановка разгона при T куба: <b>{term_k_m}</b>")
         else:
-            self.term_k_m_label.setText("T куба для остановки разгона: -")
+            self.term_k_m_label.setText("Остановка разгона при T куба: -")
 
     def check_signal_conditions(self):
         """Checks the conditions and updates the signal labels."""
