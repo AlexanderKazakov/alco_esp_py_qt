@@ -79,6 +79,9 @@ class AlcoEspMonitor(QMainWindow):
         self.last_mqtt_message_time = None
         self.mqtt_data_timeout_alarm_active = False  # Flag to track if "no data" alarm is shown
 
+        self.pending_term_k_m_check = False
+        self._term_k_m_check_timer = None
+
         # --- Initialize Sound Effect and Alarm Dialog (placeholder, actual init deferred) ---
         self.alarm_sound_effect = QSoundEffect(self)
         self.current_alarm_dialog = None # To keep track of the alarm dialog
@@ -276,6 +279,11 @@ class AlcoEspMonitor(QMainWindow):
         self.set_work_mode_button = QPushButton("Установить")
         self.set_work_mode_button.clicked.connect(self.publish_selected_work_mode)
         controls_grid_layout.addWidget(self.set_work_mode_button, row, 5, 1, 1)
+        row += 1
+
+        self.term_k_m_label = QLabel("T куба для остановки разгона: -")
+        self.term_k_m_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.term_k_m_label, row, 0, 1, 6)
         row += 1
 
         controls_grid_layout.addItem(QSpacerItem(20, 15, QSizePolicy.Minimum, QSizePolicy.Fixed), row, 0)
@@ -481,7 +489,17 @@ class AlcoEspMonitor(QMainWindow):
                 temp_stop_razgon = self.settings['temp_stop_razgon']
                 logger.info(f"Requesting to set term_k_r: {temp_stop_razgon}")
                 self.publishRequested.emit("term_k_r", str(temp_stop_razgon))
-                self.update_status(f"Запрос на установку температуры разгона куба term_k_r: {temp_stop_razgon}")
+                self.update_status(f"Запрос на установку term_k_r: {temp_stop_razgon} для установки режима РАЗГОН.")
+
+                # Set a flag to check the next 'term_k_m' update for confirmation
+                self.pending_term_k_m_check = True
+                if self._term_k_m_check_timer:
+                    self._term_k_m_check_timer.stop()
+                self._term_k_m_check_timer = QTimer()
+                self._term_k_m_check_timer.setSingleShot(True)
+                self._term_k_m_check_timer.timeout.connect(self.check_term_k_m_timeout)
+                self._term_k_m_check_timer.start(TERM_K_M_CHECK_TIMEOUT * 1000)
+                logger.info(f"Scheduled one-time check for term_k_m to be {temp_stop_razgon}")
 
             mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
             logger.info(f"Requesting to set work mode: {mode_name} ({mode_code})")
@@ -607,6 +625,10 @@ class AlcoEspMonitor(QMainWindow):
         # --- Store all data ---
         self.all_latest_values[topic] = payload_str
 
+        # --- Check for term_k_m confirmation if a check is pending ---
+        if self.pending_term_k_m_check and topic == "term_k_m":
+            self.check_term_k_m_confirmation(payload_str)
+
         # --- CSV Logging for all the device data  ---
         try:
             try:
@@ -644,6 +666,50 @@ class AlcoEspMonitor(QMainWindow):
                 self.timestamps[topic].append(current_time)
             except ValueError:
                 logger.error(f"Could not convert payload '{payload_str}' for topic '{topic}' to number.")
+
+    def check_term_k_m_confirmation(self, received_value_str):
+        """Checks if the received term_k_m value matches the expected one and alarms if not."""
+        if not self.pending_term_k_m_check:
+            return
+
+        try:
+            received_value = float(received_value_str)
+            # Using a small tolerance for float comparison
+            if abs(received_value - self.settings['temp_stop_razgon']) < 0.01:
+                logger.info(f"OK: term_k_m confirmation received: {received_value}, "
+                            f"expected {self.settings['temp_stop_razgon']}")
+                self.update_status(f"Проверено: term_k_m = {received_value:.1f}°C")
+            else:
+                alarm_msg = (f"НЕВЕРНОЕ ЗНАЧЕНИЕ: term_k_m={received_value} "
+                             f"при ожидаемом {self.settings['temp_stop_razgon']}!")
+                logger.error(alarm_msg)
+                self.alarm_message_with_sound(alarm_msg)
+        except (ValueError, TypeError) as e:
+            alarm_msg = f"ОШИБКА ПРОВЕРКИ: не удалось обработать значение term_k_m '{received_value_str}': {e}"
+            logger.error(alarm_msg)
+            self.alarm_message_with_sound(alarm_msg)
+        finally:
+            # The check is done, reset the state.
+            self._reset_pending_check()
+
+    def check_term_k_m_timeout(self):
+        """Handles the timeout for term_k_m confirmation."""
+        if not self.pending_term_k_m_check:
+            return
+
+        alarm_msg = (f"ОШИБКА: Нет данных от term_k_m в течение {TERM_K_M_CHECK_TIMEOUT}с для проверки "
+                     f"установки значения {self.settings['temp_stop_razgon']}")
+        logger.error(alarm_msg)
+        self.alarm_message_with_sound(alarm_msg)
+        self._reset_pending_check()
+
+    def _reset_pending_check(self):
+        """Resets all state variables related to the pending check."""
+        if self._term_k_m_check_timer:
+            self._term_k_m_check_timer.stop()
+            self._term_k_m_check_timer.deleteLater()
+            self._term_k_m_check_timer = None
+        self.pending_term_k_m_check = False
 
     def update_plots_and_signals(self):
         """Updates plots and checks signal conditions."""
@@ -789,6 +855,15 @@ class AlcoEspMonitor(QMainWindow):
             self.otbor_t_label.setText(f"ШИМ, % (сейчас <b>{otbor_t}</b>):")
         else:
             self.otbor_t_label.setText("ШИМ, %:")
+
+        term_k_m = self.all_latest_values.get("term_k_m")
+        if term_k_m is not None:
+            try:
+                self.term_k_m_label.setText(f"T куба для остановки разгона: <b>{float(term_k_m):.1f}°C</b>")
+            except (ValueError, TypeError):
+                self.term_k_m_label.setText(f"T куба для остановки разгона: <b>{term_k_m}</b>")
+        else:
+            self.term_k_m_label.setText("T куба для остановки разгона: -")
 
     def check_signal_conditions(self):
         """Checks the conditions and updates the signal labels."""

@@ -9,6 +9,7 @@ DEFAULT_PERIOD_SECONDS = 60 # seconds
 DEFAULT_TEMP_STOP_RAZGON = 70.0  # °C
 DEFAULT_CHART_Y_MIN = 10.0 # °C
 DEFAULT_CHART_Y_MAX = 110.0 # °C
+TERM_K_M_CHECK_TIMEOUT = 20 # seconds
 
 
 class SettingsDialog(QDialog):

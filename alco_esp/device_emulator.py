@@ -95,6 +95,7 @@ def on_connect(client, userdata, flags, rc):
     
     # Подписываемся на топики для получения команд
     client.subscribe(topic_prefix + "work")
+    client.subscribe(f"{topic_prefix}term_k_r") # For setting razgon stop temp
 
     # Subscribe to all commandable topics (_new suffix)
     commandable_topics = [
@@ -131,6 +132,15 @@ def on_message(client, userdata, msg):
 
         except ValueError:
             print(f"on_message: Некорректное значение для режима работы ({relative_topic}): {payload}")
+    
+    elif relative_topic == "term_k_r":
+        try:
+            temp_stop_razgon = float(payload)
+            print(f"on_message: Получена команда (term_k_r) установить term_k_m на: {temp_stop_razgon}")
+            device_state["term_k_m"] = temp_stop_razgon
+            print(f"on_message: Параметр term_k_m обновлен на {device_state['term_k_m']}")
+        except ValueError:
+            print(f"on_message: Некорректное значение для term_k_r: {payload}")
     
     elif relative_topic.endswith("_new"):
         # Извлекаем базовый топик из имени с _new
