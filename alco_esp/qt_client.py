@@ -480,9 +480,10 @@ class AlcoEspMonitor(QMainWindow):
                 Потом включить разгон в плитке «work».
                 """
                 temp_stop_razgon = self.settings['temp_stop_razgon']
-                logger.info(f"Requesting to set term_k_r: {temp_stop_razgon}")
-                self.publishRequested.emit("term_k_r", str(temp_stop_razgon))
-                self.update_status(f"Запрос на установку term_k_r: {temp_stop_razgon} для установки режима РАЗГОН.")
+                payload = f"{temp_stop_razgon:.1f}"
+                logger.info(f"Requesting to set term_k_r: {payload}")
+                self.publishRequested.emit("term_k_r", payload)
+                self.update_status(f"Запрос на установку term_k_r: {payload}°C для установки режима РАЗГОН.")
 
                 # Set a flag to check the next 'term_k_m' update for confirmation
                 self.pending_term_k_m_check = True
@@ -518,10 +519,11 @@ class AlcoEspMonitor(QMainWindow):
         """Publishes the 'T stop' for 'otbor tela'."""
         try:
             t_stop = self.term_c_max_telo_spinbox.value()
-            log_msg = f"Requesting otbor tela T_stop={t_stop}"
+            payload = f"{t_stop:.1f}"
+            log_msg = f"Requesting otbor tela T_stop={payload}"
             logger.info(log_msg)
-            self.publishRequested.emit(control_topics["term_c_max_new"], str(t_stop))
-            self.update_status(f"Запрос T стоп отбора тела: {t_stop}°C")
+            self.publishRequested.emit(control_topics["term_c_max_new"], payload)
+            self.update_status(f"Запрос T стоп отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_stop publication: {e}", exc_info=True)
             self.update_status(f"Ошибка T стоп отбора тела: {e}")
@@ -530,10 +532,11 @@ class AlcoEspMonitor(QMainWindow):
         """Publishes the 'T start' for 'otbor tela'."""
         try:
             t_start = self.term_c_min_telo_spinbox.value()
-            log_msg = f"Requesting otbor tela T_start={t_start}"
+            payload = f"{t_start:.1f}"
+            log_msg = f"Requesting otbor tela T_start={payload}"
             logger.info(log_msg)
-            self.publishRequested.emit(control_topics["term_c_min_new"], str(t_start))
-            self.update_status(f"Запрос T старт отбора тела: {t_start}°C")
+            self.publishRequested.emit(control_topics["term_c_min_new"], payload)
+            self.update_status(f"Запрос T старт отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_start publication: {e}", exc_info=True)
             self.update_status(f"Ошибка T старт отбора тела: {e}")
