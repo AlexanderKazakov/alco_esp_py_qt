@@ -1,48 +1,20 @@
-import os
-import sys
 import signal
-import json
-import paho.mqtt.client as mqtt
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel,
-                             QGridLayout, QHBoxLayout, QDoubleSpinBox, QPushButton,
-                             QSpacerItem, QSizePolicy, QDialog, QFormLayout, QMessageBox, QComboBox,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea, QFrame)
-from PyQt5.QtCore import QThread, QObject, pyqtSignal, pyqtSlot, QTimer, Qt, QUrl
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QGridLayout, QSpacerItem, QSizePolicy, QComboBox, QScrollArea, QFrame)
+from PyQt5.QtCore import QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtMultimedia import QSoundEffect
 from collections import deque
 from datetime import datetime, timedelta
-import logging
-from logging.handlers import RotatingFileHandler
 
-from alco_esp.constants import WORK_STATE_NAMES, WorkState
+from alco_esp.constants import *
+from alco_esp.logging import *
+from alco_esp.settings import *
+from alco_esp.mqtt_utils import MqttWorker
+from alco_esp.child_dialogs import *
 
-client_id = "python_qt_client_viewer"
-
-chart_temperature_topics = ["term_d", "term_c", "term_k"]
-topics_of_main_interest = chart_temperature_topics + ["power", "press_a", "flag_otb"]
-
-# --- CSV Logging Settings ---
-CSV_DATA_TOPIC_ORDER = ["term_c", "term_k", "term_d", "power", "press_a", "flag_otb"]
-CSV_DATA_HEADERS = {
-    "term_c": "T царга",
-    "term_k": "T куб",
-    "term_d": "T дефлегматор",
-    "power": "Мощность",
-    "press_a": "Атм. давление",
-    "flag_otb": "Флаг отбора"
-}
-
-# Path to the directory of the script or to the Pyinstaller executable directory
-# to get the resources and to write logs to
-APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# --- Secrets Management ---
-SECRETS_FILE_PATH = os.path.join(APP_ROOT_DIR, "secrets.json")
 
 # --- Alarm signal audio file path ---
 # Alarm file is expected to be directly in the APP_ROOT_DIR
@@ -51,10 +23,8 @@ ALARM_FILE_PATH = os.path.join(APP_ROOT_DIR, "alarm.wav")
 # --- Maximum MQTT connection delay. When it is exceeded, user is notified ---
 MQTT_DATA_TIMEOUT_SECONDS = 60.0
 
-# --- Signal Style Definitions ---
-STYLE_ALARM_TRIGGERED = "background-color: orangered; color: white; padding: 5px; border: 1px solid grey;"
-STYLE_MONITORING = "background-color: lightblue; padding: 5px; border: 1px solid grey;"
-STYLE_INACTIVE = "background-color: lightgray; padding: 5px; border: 1px solid grey;"
+# --- Maximum number of temperature steps to store for plotting ---
+TEMPERATURE_DATA_WINDOW_SIZE = 10**6
 
 # Topics for publishing control values (will be prefixed)
 control_topics = {
@@ -64,401 +34,6 @@ control_topics = {
     "term_c_min_new": "term_c_min_new",
     "otbor_t_new": "otbor_t_new"
 }
-
-
-# --- Data Storage ---
-window_size = 10**6
-# Initialize data storage for all subscribed topics
-data = {key: deque(maxlen=window_size) for key in chart_temperature_topics}
-timestamps = {key: deque(maxlen=window_size) for key in chart_temperature_topics}
-
-# --- Default Settings for Signal Conditions ---
-DEFAULT_T_SIGNAL_KUB = 60.0  # °C
-DEFAULT_T_SIGNAL_DEFLEGMATOR = 70.0  # °C
-DEFAULT_DELTA_T = 0.2       # °C
-DEFAULT_PERIOD_SECONDS = 60 # seconds
-DEFAULT_TEMP_STOP_RAZGON = 70.0  # °C
-DEFAULT_CHART_Y_MIN = 10.0
-DEFAULT_CHART_Y_MAX = 110.0
-
-
-def load_secrets_with_gui_feedback():
-    """
-    Loads secrets from secrets.json.
-    On error, it logs, shows a QMessageBox, and exits.
-    """
-    if not os.path.exists(SECRETS_FILE_PATH):
-        template_path = os.path.join(APP_ROOT_DIR, "secrets_template.json")
-        msg = f"Файл с секретами не найден: {SECRETS_FILE_PATH}\n\n"
-        if os.path.exists(template_path):
-            msg += "Пожалуйста, скопируйте 'secrets_template.json' в 'secrets.json' и укажите ваши данные."
-        else:
-            msg += "Шаблон 'secrets_template.json' также отсутствует. Продолжение невозможно."
-        logger.critical(msg)
-        QMessageBox.critical(None, "Ошибка конфигурации", msg)
-        sys.exit(1)
-
-    try:
-        with open(SECRETS_FILE_PATH, 'r', encoding='utf-8') as f:
-            secrets = json.load(f)
-
-        required_keys = ["broker", "port", "username", "password"]
-        if not all(key in secrets for key in required_keys):
-            missing_keys = [key for key in required_keys if key not in secrets]
-            msg = f"В файле секретов {SECRETS_FILE_PATH} отсутствуют необходимые ключи: {', '.join(missing_keys)}"
-            logger.critical(msg)
-            QMessageBox.critical(None, "Ошибка конфигурации", msg)
-            sys.exit(1)
-
-        logger.info("Successfully loaded secrets from secrets.json.")
-        return secrets
-
-    except json.JSONDecodeError as e:
-        msg = f"Error decoding {SECRETS_FILE_PATH}: {e}"
-        logger.critical(msg, exc_info=True)
-        QMessageBox.critical(None, "Ошибка конфигурации", f"Ошибка чтения secrets.json. Является ли он корректным JSON?\n\n{e}")
-        sys.exit(1)
-    except Exception as e:
-        msg = f"An unexpected error occurred while loading secrets: {e}"
-        logger.critical(msg, exc_info=True)
-        QMessageBox.critical(None, "Ошибка конфигурации", msg)
-        sys.exit(1)
-
-
-# --- Settings Dialog ---
-class SettingsDialog(QDialog):
-    def __init__(self, parent=None, current_settings=None):
-        super().__init__(parent)
-        self.setWindowTitle("Настройки")
-        self.setModal(True)
-        layout = QFormLayout(self)
-        layout.setRowWrapPolicy(QFormLayout.WrapAllRows)
-
-        # --- Сигналы ---
-        heading_signals = QLabel("<b>Сигналы</b>")
-        heading_signals.setAlignment(Qt.AlignCenter)
-        layout.addRow(heading_signals)
-
-        self.t_signal_kub_spinbox = QDoubleSpinBox()
-        self.t_signal_kub_spinbox.setRange(0.0, 100.0)
-        self.t_signal_kub_spinbox.setDecimals(1)
-        self.t_signal_kub_spinbox.setSingleStep(0.1)
-        self.t_signal_kub_spinbox.setValue(current_settings.get("t_signal_kub", DEFAULT_T_SIGNAL_KUB))
-        layout.addRow("Порог сигнала T куба (°C):", self.t_signal_kub_spinbox)
-
-        self.t_signal_deflegmator_spinbox = QDoubleSpinBox()
-        self.t_signal_deflegmator_spinbox.setRange(0.0, 100.0)
-        self.t_signal_deflegmator_spinbox.setDecimals(1)
-        self.t_signal_deflegmator_spinbox.setSingleStep(0.1)
-        self.t_signal_deflegmator_spinbox.setValue(
-            current_settings.get("t_signal_deflegmator", DEFAULT_T_SIGNAL_DEFLEGMATOR))
-        layout.addRow("Порог сигнала T дефлегматора (°C):", self.t_signal_deflegmator_spinbox)
-
-        heading_temp_signal = QLabel("<b>Сигнал стабильности температуры</b>")
-        heading_temp_signal.setAlignment(Qt.AlignCenter)
-        layout.addRow(heading_temp_signal)
-
-        self.delta_t_spinbox = QDoubleSpinBox()
-        self.delta_t_spinbox.setRange(0.01, 10.0)
-        self.delta_t_spinbox.setDecimals(2)
-        self.delta_t_spinbox.setSingleStep(0.01)
-        self.delta_t_spinbox.setValue(current_settings.get("delta_t", DEFAULT_DELTA_T))
-        layout.addRow("Порог разброса ΔT <i>(max(ΔT) - min(ΔT))</i> за период (°C):", self.delta_t_spinbox)
-
-        self.period_spinbox = QDoubleSpinBox()  # Using QDoubleSpinBox for consistency, could be QSpinBox
-        self.period_spinbox.setRange(1.0, 3600.0)  # Seconds
-        self.period_spinbox.setDecimals(0)
-        self.period_spinbox.setValue(current_settings.get("period_seconds", DEFAULT_PERIOD_SECONDS))
-        layout.addRow("Период оценки разброса ΔT (с):", self.period_spinbox)
-
-        # --- Разгон ---
-        heading_razgon = QLabel("<b>Разгон</b>")
-        heading_razgon.setAlignment(Qt.AlignCenter)
-        layout.addRow(heading_razgon)
-
-        self.temp_stop_razgon_spinbox = QDoubleSpinBox()
-        self.temp_stop_razgon_spinbox.setRange(0.0, 100.0)
-        self.temp_stop_razgon_spinbox.setDecimals(1)
-        self.temp_stop_razgon_spinbox.setSingleStep(0.1)
-        self.temp_stop_razgon_spinbox.setValue(current_settings.get("temp_stop_razgon", DEFAULT_TEMP_STOP_RAZGON))
-        layout.addRow("Температура остановки разгона куба (°C):", self.temp_stop_razgon_spinbox)
-
-        # --- График ---
-        heading_chart = QLabel("<b>График</b>")
-        heading_chart.setAlignment(Qt.AlignCenter)
-        layout.addRow(heading_chart)
-
-        self.chart_y_min_spinbox = QDoubleSpinBox()
-        self.chart_y_min_spinbox.setRange(-50.0, 200.0)
-        self.chart_y_min_spinbox.setDecimals(0)
-        self.chart_y_min_spinbox.setSingleStep(1.0)
-        self.chart_y_min_spinbox.setValue(current_settings.get("chart_y_min", DEFAULT_CHART_Y_MIN))
-        layout.addRow("Пределы температур на графике, мин (°C):", self.chart_y_min_spinbox)
-
-        self.chart_y_max_spinbox = QDoubleSpinBox()
-        self.chart_y_max_spinbox.setRange(-50.0, 200.0)
-        self.chart_y_max_spinbox.setDecimals(0)
-        self.chart_y_max_spinbox.setSingleStep(1.0)
-        self.chart_y_max_spinbox.setValue(current_settings.get("chart_y_max", DEFAULT_CHART_Y_MAX))
-        layout.addRow("Пределы температур на графике, макс (°C):", self.chart_y_max_spinbox)
-
-
-        self.buttons_layout = QHBoxLayout()
-        self.ok_button = QPushButton("OK")
-        self.ok_button.clicked.connect(self.accept)
-        self.cancel_button = QPushButton("Отмена")
-        self.cancel_button.clicked.connect(self.reject)
-        self.buttons_layout.addStretch()
-        self.buttons_layout.addWidget(self.ok_button)
-        self.buttons_layout.addWidget(self.cancel_button)
-        layout.addRow(self.buttons_layout)
-
-    def get_settings(self):
-        return {
-            "t_signal_kub": self.t_signal_kub_spinbox.value(),
-            "t_signal_deflegmator": self.t_signal_deflegmator_spinbox.value(),
-            "delta_t": self.delta_t_spinbox.value(),
-            "period_seconds": int(self.period_spinbox.value()),
-            "temp_stop_razgon": self.temp_stop_razgon_spinbox.value(),
-            "chart_y_min": self.chart_y_min_spinbox.value(),
-            "chart_y_max": self.chart_y_max_spinbox.value()
-        }
-
-
-class CustomNavigationToolbar(NavigationToolbar):
-    def __init__(self, canvas, parent, timestamps_ref):
-        super().__init__(canvas, parent)
-        self.timestamps_ref = timestamps_ref
-
-    def home(self, *args):
-        """Overrides the default home button behavior to zoom to full data range
-        and re-enable auto-scrolling."""
-        logger.debug("Custom 'Home' button pressed. Resetting view to full data range and enabling autoscroll.")
-        ax = self.canvas.figure.axes[0]
-
-        all_times = [t for topic_times in self.timestamps_ref.values() for t in topic_times if topic_times]
-        if all_times:
-            min_time = min(all_times)
-            max_time = max(all_times)
-            if min_time == max_time:
-                max_time = max_time + timedelta(seconds=10)
-            else:
-                time_range = max_time - min_time
-                max_time = max_time + time_range * 0.05
-                min_time = min_time - time_range * 0.01
-            ax.set_xlim(min_time, max_time)
-            logger.debug(f"Home button: setting xlim to ({min_time}, {max_time})")
-        else:
-            now = datetime.now()
-            ax.set_xlim(now - timedelta(seconds=60), now)
-
-        # Reset Y-axis to default view
-        ax.set_ylim(self.parent.settings["chart_y_min"], self.parent.settings["chart_y_max"])
-
-        # Re-enable autoscale on the x-axis so the plot continues to scroll
-        ax.set_autoscalex_on(True)
-
-        # Tell the toolbar that this is the new "home" view.
-        # This clears the zoom history and sets the current view as the base.
-        self.update()
-        self.canvas.draw()
-
-
-class AllDataViewerDialog(QDialog):
-    def __init__(self, data_dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Все данные от устройства")
-        self.setModal(False)
-
-        layout = QVBoxLayout(self)
-
-        self.log_button = QPushButton("Показать журналы данных")
-        self.log_button.clicked.connect(self.open_log_folder)
-        layout.addWidget(self.log_button)
-
-        self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Параметр", "Значение"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.setSortingEnabled(True)
-
-        layout.addWidget(self.table)
-        self.update_data(data_dict)
-
-        self.adjustSize()  # Adjust to content width
-
-    def open_log_folder(self):
-        log_dir = os.path.join(APP_ROOT_DIR, "log")
-        if os.path.isdir(log_dir):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(log_dir))
-        else:
-            QMessageBox.warning(self, "Папка не найдена", f"Папка с журналами не найдена:\n{log_dir}")
-
-    def update_data(self, data_dict):
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(len(data_dict))
-        
-        # Using a list from items() is sufficient
-        sorted_items = sorted(data_dict.items())
-
-        for row, (key, value) in enumerate(sorted_items):
-            self.table.setItem(row, 0, QTableWidgetItem(str(key)))
-            self.table.setItem(row, 1, QTableWidgetItem(str(value)))
-            
-        self.table.resizeRowsToContents()
-        self.table.setSortingEnabled(True)
-
-
-# --- Alarm Notification Dialog ---
-class AlarmNotificationDialog(QDialog):
-    def __init__(self, message, sound_effect, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("ВНИМАНИЕ!")
-        self.setModal(True)
-        self.sound_effect = sound_effect # Store the sound effect instance
-
-        layout = QVBoxLayout(self)
-        
-        self.message_label = QLabel(message)
-        self.message_label.setWordWrap(True)
-        self.message_label.setStyleSheet(STYLE_ALARM_TRIGGERED)
-        self.message_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.message_label)
-
-        self.ok_button = QPushButton("Сбросить")
-        self.ok_button.clicked.connect(self.accept) # accept() will close the dialog
-        layout.addWidget(self.ok_button)
-
-        self.setMinimumWidth(350)
-        self.adjustSize() # Adjust size to content
-
-        # Optional: Center on parent or screen
-        if parent:
-            parent_rect = parent.geometry()
-            self.move(parent_rect.center().x() - self.width() // 2, 
-                      parent_rect.center().y() - self.height() // 2)
-
-    def accept(self):
-        """Called when OK button is clicked."""
-        if self.sound_effect and self.sound_effect.isPlaying():
-            self.sound_effect.stop()
-        super().accept()
-
-    def closeEvent(self, event):
-        """Ensure sound stops if dialog is closed by other means."""
-        if self.sound_effect and self.sound_effect.isPlaying():
-            self.sound_effect.stop()
-        super().closeEvent(event)
-
-# --- MQTT Worker Thread ---
-class MqttWorker(QObject):
-    """
-    Handles MQTT communication in a separate thread.
-    """
-    messageReceived = pyqtSignal(str, str) # topic, payload
-    connectionStatus = pyqtSignal(str)    # status message
-    finished = pyqtSignal()               # Signal emitted when the worker is done
-
-    def __init__(self, broker, port, username, password, client_id):  #, topics_to_subscribe):
-        super().__init__()
-        self.broker = broker
-        self.port = port
-        self.username = username
-        self.password = password
-        self.client_id = client_id
-        # self.topics_to_subscribe = topics_to_subscribe
-        self.topic_prefix = f"{username}/"
-        self.client = None
-
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            log_msg = f"Подключено к MQTT брокеру: {self.broker}"
-            logger.info(log_msg)
-            self.connectionStatus.emit(log_msg)
-            
-            # Subscribe to the wildcard topic to get all messages from the device.
-            # The handle_message function will then filter for topics of interest.
-            # Subscribing to individual topics in addition to the wildcard caused duplicate message delivery.
-            wildcard_topic = f"{self.topic_prefix}#"
-            client.subscribe(wildcard_topic, qos=0)
-            logger.info(f"Subscribed to wildcard topic to receive all device data: {wildcard_topic}")
-        
-        else:
-            log_msg = f"Ошибка подключения, код {rc}"
-            logger.error(log_msg)
-            self.connectionStatus.emit(log_msg)
-
-    def on_message(self, client, userdata, msg):
-        topic = msg.topic.replace(self.topic_prefix, "")
-        payload = msg.payload.decode()
-        logger.debug(f"Received MQTT message: Topic='{topic}', Payload='{payload}'")
-        self.messageReceived.emit(topic, payload)
-
-    def on_disconnect(self, client, userdata, rc):
-         log_msg = f"Отключено от MQTT брокера (rc={rc})"
-         logger.warning(log_msg) # Using warning for disconnect
-         self.connectionStatus.emit(log_msg)
-         if rc != 0:
-             # Paho's loop_start() handles reconnection attempts automatically.
-             logger.warning("Unexpected disconnection. Paho-MQTT will attempt to reconnect.")
-             self.connectionStatus.emit("Неожиданное отключение. Попытка переподключения...")
-
-    def run(self):
-        """
-        Connects and starts the MQTT loop in the background.
-        """
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, self.client_id)
-        self.client.username_pw_set(self.username, self.password)
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
-        self.client.on_disconnect = self.on_disconnect
-
-        try:
-            self.connectionStatus.emit(f"Подключение к {self.broker}...")
-            logger.info(f"MqttWorker: Attempting to connect to {self.broker}:{self.port}")
-            self.client.connect(self.broker, self.port, 60)
-            self.client.loop_start() # Start network loop in background thread and return
-            logger.info("MqttWorker: loop_start() called. Paho MQTT thread managing connection.")
-            # The QThread's event loop will now run implicitly for this worker thread,
-            # allowing it to process signals/slots like publish_message.
-        except Exception as e:
-            logger.error(f"MqttWorker: MQTT connection error: {e}", exc_info=True)
-            self.connectionStatus.emit(f"Ошибка подключения MQTT: {e}")
-            # If connection fails, we should signal finished maybe?
-            # Or attempt reconnect later? For now, emit finished.
-            self.finished.emit() # Emit finished if connection fails immediately
-
-        # Note: No loop_forever() here. The run method finishes,
-        # but the Paho loop runs in its own thread, and the MqttWorker
-        # object continues to live in the QThread, processing Qt events.
-        # We also remove the finally block that disconnected,
-        # as disconnection should happen on closeEvent or explicit stop.
-
-    @pyqtSlot(str, str)
-    def publish_message(self, topic_suffix, payload):
-        """Publishes a message to the specified topic suffix."""
-        # logger.debug("In publish_message") # Debug
-        if self.client and self.client.is_connected():
-            full_topic = self.topic_prefix + topic_suffix
-            try:
-                # Add status update before publishing
-                self.connectionStatus.emit(f"Публикация: {topic_suffix} = {payload}")
-                logger.info(f"Attempting to publish: Topic='{full_topic}', Payload='{payload}'")
-                rc, mid = self.client.publish(full_topic, payload=payload, qos=1) # Use QoS 1 for reliability
-                if rc == mqtt.MQTT_ERR_SUCCESS:
-                    logger.info(f"Successfully published: Topic='{full_topic}', Payload='{payload}', MID={mid}")
-                    # Add status update on success
-                    self.connectionStatus.emit(f"Опубликовано: {topic_suffix} = {payload}")
-                else:
-                    logger.error(f"Failed to publish to {full_topic}, return code: {rc}")
-                    self.connectionStatus.emit(f"Ошибка публикации: {topic_suffix} (код {rc})")
-            except Exception as e:
-                logger.error(f"Error publishing message to {full_topic}: {e}", exc_info=True)
-                self.connectionStatus.emit(f"Ошибка публикации: {topic_suffix}: {e}")
-        else:
-            logger.warning("Cannot publish, MQTT client not connected.")
-            self.connectionStatus.emit("Ошибка публикации: нет подключения")
 
 
 # --- Main Application Window ---
@@ -482,6 +57,9 @@ class AlcoEspMonitor(QMainWindow):
             "chart_y_min": DEFAULT_CHART_Y_MIN,
             "chart_y_max": DEFAULT_CHART_Y_MAX
         }
+
+        self.data = {key: deque(maxlen=TEMPERATURE_DATA_WINDOW_SIZE) for key in CHART_TEMPERATURE_TOPICS}
+        self.timestamps = {key: deque(maxlen=TEMPERATURE_DATA_WINDOW_SIZE) for key in CHART_TEMPERATURE_TOPICS}
 
         # --- Storage for all device data ---
         self.all_latest_values = {}
@@ -538,7 +116,7 @@ class AlcoEspMonitor(QMainWindow):
         plt.style.use('seaborn-v0_8-darkgrid')
         self.figure, self.ax = plt.subplots(1, 1, figsize=(10, 6)) # Single plot
         self.canvas = FigureCanvas(self.figure)
-        self.toolbar = CustomNavigationToolbar(self.canvas, self, timestamps)
+        self.toolbar = CustomNavigationToolbar(self.canvas, self, self.timestamps)
 
         self.plot_layout.addWidget(self.toolbar)
         self.plot_layout.addWidget(self.canvas, 1)
@@ -992,8 +570,7 @@ class AlcoEspMonitor(QMainWindow):
             self.secrets["broker"],
             self.secrets["port"],
             self.secrets["username"],
-            self.secrets["password"],
-            client_id
+            self.secrets["password"]
         )
         self.mqtt_worker.moveToThread(self.mqtt_thread)
 
@@ -1042,7 +619,7 @@ class AlcoEspMonitor(QMainWindow):
             logger.error(f"Failed to write to all_data.csv for topic {topic}: {e}", exc_info=True)
 
         # --- CSV Logging specially for topics of main interest ---
-        if topic in topics_of_main_interest:
+        if topic in TOPICS_OF_MAIN_INTEREST:
             try:
                 values = [''] * len(CSV_DATA_TOPIC_ORDER)
                 idx = CSV_DATA_TOPIC_ORDER.index(topic)
@@ -1060,11 +637,11 @@ class AlcoEspMonitor(QMainWindow):
                 logger.error(f"Failed to write data to CSV for topic {topic}: {e}", exc_info=True)
 
         # --- Process specific topics for plotting ---
-        if topic in chart_temperature_topics:
+        if topic in CHART_TEMPERATURE_TOPICS:
             try:
                 value = float(payload_str)
-                data[topic].append(value)
-                timestamps[topic].append(current_time)
+                self.data[topic].append(value)
+                self.timestamps[topic].append(current_time)
             except ValueError:
                 logger.error(f"Could not convert payload '{payload_str}' for topic '{topic}' to number.")
 
@@ -1083,8 +660,8 @@ class AlcoEspMonitor(QMainWindow):
         # --- Update Temperature Data and legend ---
         for key in ["term_c", "term_k", "term_d"]:
             if key in self.lines:
-                if timestamps[key]:
-                    self.lines[key].set_data(list(timestamps[key]), list(data[key])) # Ensure lists
+                if self.timestamps[key]:
+                    self.lines[key].set_data(list(self.timestamps[key]), list(self.data[key])) # Ensure lists
                     self.lines[key].set_visible(True)
                 else:
                     self.lines[key].set_data([], [])
@@ -1106,7 +683,7 @@ class AlcoEspMonitor(QMainWindow):
             self.ax.set_ylim(self.settings["chart_y_min"], self.settings["chart_y_max"]) # Ensure Y-axis is fixed during autoscroll
 
             # Adjust x-axis limits based on the actual time range present in the data
-            all_times = [t for topic_times in timestamps.values() for t in topic_times if topic_times] # Filter empty
+            all_times = [t for topic_times in self.timestamps.values() for t in topic_times if topic_times] # Filter empty
             if all_times:
                 min_time = min(all_times)
                 max_time = max(all_times)
@@ -1396,8 +973,8 @@ class AlcoEspMonitor(QMainWindow):
             # Create a list only from the relevant slice of the deque
             return [data_deque[i] for i in range(start_index, len(data_deque))]
 
-        k_data_window = get_windowed_data(timestamps['term_k'], data['term_k'], start_time)
-        c_data_window = get_windowed_data(timestamps['term_c'], data['term_c'], start_time)
+        k_data_window = get_windowed_data(self.timestamps['term_k'], self.data['term_k'], start_time)
+        c_data_window = get_windowed_data(self.timestamps['term_c'], self.data['term_c'], start_time)
 
         # Per user instruction: "считать, что N последних измерений куба соответствуют N последним измерениям царги"
         num_pairs = min(len(k_data_window), len(c_data_window))
@@ -1487,133 +1064,7 @@ class AlcoEspMonitor(QMainWindow):
         event.accept()
 
 
-class CsvRotatingFileHandler(RotatingFileHandler):
-    """
-    A RotatingFileHandler that writes a header to new files.
-    """
-    def __init__(self, filename, *args, header=None, **kwargs):
-        self.header = header
-        # We need to determine if the header needs to be written BEFORE the file is opened for appending.
-        # The base class opens the file in its __init__.
-        # So, we check for file existence and size here.
-        write_header = not os.path.exists(filename) or os.path.getsize(filename) == 0
-
-        super().__init__(filename, *args, **kwargs)
-
-        if write_header and self.header:
-            self.stream.write(self.header + '\n')
-            self.stream.flush()
-
-    def doRollover(self):
-        super().doRollover()
-        # After rollover, the new file (self.baseFilename) is empty.
-        # The stream has been reopened by the base class.
-        if self.header:
-            self.stream.write(self.header + '\n')
-            self.stream.flush()
-
-
-def setup_data_logging():
-    """Sets up a separate logger for CSV data."""
-    main_data_logger.setLevel(logging.INFO)
-
-    log_dir = os.path.join(APP_ROOT_DIR, "log")
-    log_file = os.path.join(log_dir, "alco_esp_data.csv")
-    csv_header = "Время;" + ";".join([CSV_DATA_HEADERS[topic] for topic in CSV_DATA_TOPIC_ORDER])
-
-    # Use our custom handler to manage the header
-    file_handler = CsvRotatingFileHandler(
-        log_file,
-        mode='a',
-        maxBytes=100 * 1024 * 1024,
-        backupCount=5,
-        encoding='utf-8-sig',
-        header=csv_header
-    )
-
-    # Formatter that just passes the message through, as we format it ourselves.
-    formatter = logging.Formatter('%(message)s')
-    file_handler.setFormatter(formatter)
-
-    main_data_logger.addHandler(file_handler)
-
-    # Prevent data logs from propagating to the root logger (and thus the console)
-    main_data_logger.propagate = False
-    logger.info("Data logging to CSV setup complete.")
-
-
-def setup_all_data_logging():
-    """Sets up a separate logger for all incoming device data."""
-    all_data_logger.setLevel(logging.INFO)
-
-    log_dir = os.path.join(APP_ROOT_DIR, "log")
-    log_file = os.path.join(log_dir, "alco_esp_all_device_data.csv")
-    csv_header = "Время;Топик;Значение"
-
-    file_handler = CsvRotatingFileHandler(
-        log_file,
-        mode='a',
-        maxBytes=100 * 1024 * 1024,
-        backupCount=5,
-        encoding='utf-8-sig',
-        header=csv_header
-    )
-
-    formatter = logging.Formatter('%(message)s')
-    file_handler.setFormatter(formatter)
-    all_data_logger.addHandler(file_handler)
-    all_data_logger.propagate = False
-    logger.info("All data logging to all_device_data.csv setup complete.")
-
-
-def setup_logging():
-    logger.setLevel(logging.DEBUG)  # Set the logging level for the logger
-
-    # --- Define log directory and file path ---
-    # Log directory is APP_ROOT_DIR/log
-    log_dir = os.path.join(APP_ROOT_DIR, "log")
-    log_dir_error = None
-    if not os.path.exists(log_dir):
-        try:
-            os.makedirs(log_dir)
-        except OSError as e:
-            log_dir_error = f"CRITICAL ERROR: Could not create log directory {log_dir}: {e}"
-            logger.error(log_dir_error)
-            log_dir = APP_ROOT_DIR
-
-    log_file = os.path.join(log_dir, "alco_esp_monitor.log")
-    # Rotate log file when it reaches 100MB, keep 5 backup logs
-    file_handler = RotatingFileHandler(log_file, maxBytes=100 * 1024 * 1024, backupCount=5, encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)  # Log everything to file
-
-    # Create a console handler for higher level messages
-    console_handler = logging.StreamHandler(sys.stdout) # Explicitly use sys.stdout for the console
-    console_handler.setLevel(logging.INFO)  # Show INFO and above on console
-
-    # Create a formatter and set it for both handlers
-    # Added module, funcName, and lineno for more detailed logs
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s')
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-
-    # Add the handlers to the logger
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-    logger.info("Logging setup complete.")
-    if log_dir_error:
-        logger.error(log_dir_error)
-
-
 if __name__ == '__main__':
-    # --- Global Logger Setup ---
-    logger = logging.getLogger("AlcoEspMonitorApp")
-    main_data_logger = logging.getLogger("AlcoEspDataLogger")
-    all_data_logger = logging.getLogger("AlcoEspAllDataLogger")
-    setup_logging() # Call setup_logging here
-    setup_data_logging()
-    setup_all_data_logging()
     logger.info("Application starting...")
 
     app = QApplication(sys.argv)
