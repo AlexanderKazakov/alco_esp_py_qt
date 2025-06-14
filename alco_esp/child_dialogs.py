@@ -62,6 +62,7 @@ def load_secrets_with_gui_feedback():
 class CustomNavigationToolbar(NavigationToolbar):
     def __init__(self, canvas, parent, timestamps_ref):
         super().__init__(canvas, parent)
+        self.main_window = parent
         self.timestamps_ref = timestamps_ref
 
     def home(self, *args):
@@ -87,7 +88,7 @@ class CustomNavigationToolbar(NavigationToolbar):
             ax.set_xlim(now - timedelta(seconds=60), now)
 
         # Reset Y-axis to default view
-        ax.set_ylim(self.parent.settings["chart_y_min"], self.parent.settings["chart_y_max"])
+        ax.set_ylim(self.main_window.settings["chart_y_min"], self.main_window.settings["chart_y_max"])
 
         # Re-enable autoscale on the x-axis so the plot continues to scroll
         ax.set_autoscalex_on(True)
