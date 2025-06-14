@@ -48,15 +48,7 @@ class AlcoEspMonitor(QMainWindow):
         self.setWindowTitle("Alco ESP Real-Time Monitor")
 
         # --- Initialize Settings ---
-        self.settings = {
-            "t_signal_kub": DEFAULT_T_SIGNAL_KUB,
-            "t_signal_deflegmator": DEFAULT_T_SIGNAL_DEFLEGMATOR,
-            "delta_t": DEFAULT_DELTA_T,
-            "period_seconds": DEFAULT_PERIOD_SECONDS,
-            "temp_stop_razgon": DEFAULT_TEMP_STOP_RAZGON,
-            "chart_y_min": DEFAULT_CHART_Y_MIN,
-            "chart_y_max": DEFAULT_CHART_Y_MAX
-        }
+        self.settings = load_settings()
 
         self.data = {key: deque(maxlen=TEMPERATURE_DATA_WINDOW_SIZE) for key in CHART_TEMPERATURE_TOPICS}
         self.timestamps = {key: deque(maxlen=TEMPERATURE_DATA_WINDOW_SIZE) for key in CHART_TEMPERATURE_TOPICS}
@@ -437,6 +429,7 @@ class AlcoEspMonitor(QMainWindow):
 
         if dialog.exec_() == QDialog.Accepted:
             self.settings = dialog.get_settings()
+            save_settings(self.settings)  # Save settings to file
             log_msg = f"Settings updated: {self.settings}"
             logger.info(log_msg)
             self.update_status("Настройки обновлены.") # User-friendly status

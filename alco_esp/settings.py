@@ -1,5 +1,11 @@
+import json
+import os
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QDialog, QFormLayout, QLabel, QDoubleSpinBox, QHBoxLayout, QPushButton
+
+from alco_esp.constants import APP_ROOT_DIR
+from alco_esp.logging import logger
 
 
 DEFAULT_T_SIGNAL_KUB = 60.0  # °C
@@ -10,6 +16,59 @@ DEFAULT_TEMP_STOP_RAZGON = 70.0  # °C
 DEFAULT_CHART_Y_MIN = 10.0 # °C
 DEFAULT_CHART_Y_MAX = 110.0 # °C
 TERM_K_M_CHECK_TIMEOUT = 20 # seconds
+
+SETTINGS_FILE_PATH = os.path.join(APP_ROOT_DIR, "settings.json")
+
+
+def save_settings(settings):
+    """Saves settings to the JSON file."""
+    try:
+        with open(SETTINGS_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, indent=4, ensure_ascii=False)
+        logger.info(f"Настройки сохранены в {SETTINGS_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения настроек в {SETTINGS_FILE_PATH}: {e}", exc_info=True)
+
+
+def load_settings():
+    """Loads settings from the JSON file, or returns defaults if it fails."""
+    defaults = {
+        "t_signal_kub": DEFAULT_T_SIGNAL_KUB,
+        "t_signal_deflegmator": DEFAULT_T_SIGNAL_DEFLEGMATOR,
+        "delta_t": DEFAULT_DELTA_T,
+        "period_seconds": DEFAULT_PERIOD_SECONDS,
+        "temp_stop_razgon": DEFAULT_TEMP_STOP_RAZGON,
+        "chart_y_min": DEFAULT_CHART_Y_MIN,
+        "chart_y_max": DEFAULT_CHART_Y_MAX
+    }
+
+    if not os.path.exists(SETTINGS_FILE_PATH):
+        logger.warning(f"Файл настроек не найден: {SETTINGS_FILE_PATH}. "
+                       f"Используются настройки по-умолчанию, файл будет создан.")
+        save_settings(defaults)
+        return defaults
+
+    try:
+        with open(SETTINGS_FILE_PATH, 'r', encoding='utf-8') as f:
+            loaded_settings = json.load(f)
+
+        # Check for missing keys and add them from defaults if necessary
+        settings_updated = False
+        for key, value in defaults.items():
+            if key not in loaded_settings:
+                loaded_settings[key] = value
+                settings_updated = True
+                logger.warning(f"Отсутствующий ключ '{key}' добавлен в настройки со значением по умолчанию.")
+
+        if settings_updated:
+            save_settings(loaded_settings)
+
+        logger.info(f"Настройки загружены из {SETTINGS_FILE_PATH}")
+        return loaded_settings
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"Ошибка загрузки или парсинга файла настроек {SETTINGS_FILE_PATH}: {e}. "
+                     f"Используются настройки по-умолчанию.")
+        return defaults
 
 
 class SettingsDialog(QDialog):
