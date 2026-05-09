@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Alco ESP Qt Client",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "alco_esp.qt_client",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    {
+      "name": "Alco ESP Device Emulator",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "alco_esp.device_emulator",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Alco ESP Qt Client + Device Emulator",
+      "configurations": [
+        "Alco ESP Device Emulator",
+        "Alco ESP Qt Client"
+      ]
+    }
+  ]
+}

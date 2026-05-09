@@ -8,3 +8,4 @@ __pycache__
 /alco_esp/log/
 /alco_esp/secrets.json
 /alco_esp/settings.json
+.mplconfig/
