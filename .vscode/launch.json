@@ -24,6 +24,21 @@
       "env": {
         "PYTHONUNBUFFERED": "1"
       }
+    },
+    {
+      "name": "Pytest",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "QT_QPA_PLATFORM": "offscreen",
+        "MPLCONFIGDIR": "${workspaceFolder}/.mplconfig"
+      }
     }
   ],
   "compounds": [

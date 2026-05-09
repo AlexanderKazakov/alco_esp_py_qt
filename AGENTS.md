@@ -18,6 +18,10 @@ The main app is a **PyQt5 + Matplotlib** GUI in `[alco_esp/qt_client.py](/Users/
 
 Use only the local `.venv` virtual environment. Never call system `python` or `pip`. 
 
+## Qt binding policy - PyQt5
+
+The application binding is **PyQt5**. Keep all the code, tests and local tooling configuration aligned with PyQt5
+
 ## Runtime model (important for safe edits)
 
 - MQTT topic prefix is `"{username}/"` and is applied in `[alco_esp/mqtt_utils.py](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/mqtt_utils.py)`.
@@ -25,24 +29,16 @@ Use only the local `.venv` virtual environment. Never call system `python` or `p
 - The GUI thread must stay responsive: avoid blocking calls in UI handlers.
 - MQTT publishing from the UI must go through `publishRequested` signal (thread-safe handoff to worker).
 
-## Validation after changes
+## Tests
 
-There is no automated test suite in this repository right now.
-Do manual checks for every behavior change:
+See `TESTING.md` 
 
-1. Launch GUI and verify it starts without configuration/runtime errors.
-2. Connect to emulator or real broker and confirm telemetry updates.
-3. Confirm command publishing still works (for example `work`, `term_c_max_new`, `otbor_t_new`).
-4. Trigger at least one alarm path and confirm sound/dialog behavior.
-5. Check generated logs in `alco_esp/log/`.
+Run relevant tests before and after you apply any changes. With new features, add new tests.
 
 ## Editing expectations for agents
 
+- Anything user-facing is always in Russian!
 - Keep topic names and settings keys consistent across `qt_client.py`, `constants.py`, `settings.py`, and `device_emulator.py`.
-- Preserve Russian user-facing labels unless the task explicitly requests localization changes.
-- Prefer small, surgical edits and keep side effects explicit in logs/status messages.
+- Prefer small, surgical edits 
 - If changing MQTT control behavior, cross-check topic names against `[alco_esp/device_docs/TOPIC_REFERENCE.md](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/device_docs/TOPIC_REFERENCE.md)`.
 
-## Where to find deeper module rules
-
-See module-level guidance in `[alco_esp/AGENTS.md](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/AGENTS.md)`.
