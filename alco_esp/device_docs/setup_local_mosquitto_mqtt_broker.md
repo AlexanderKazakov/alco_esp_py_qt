@@ -137,6 +137,8 @@ allow_anonymous true
 persistence true
 persistence_location C:\ProgramData\mosquitto\
 log_dest file C:\ProgramData\mosquitto\mosquitto.log
+log_type all
+connection_messages true
 ```
 
 Если используются эти строки, сначала создать папку:
@@ -144,6 +146,14 @@ log_dest file C:\ProgramData\mosquitto\mosquitto.log
 ```bat
 mkdir C:\ProgramData\mosquitto
 ```
+
+`log_type all` и `connection_messages true` очень помогают при диагностике. В логе видно каждую попытку подключения с указанием IP:
+
+```text
+New connection from 192.168.1.57:52418 on port 1883.
+```
+
+Если такой строки при включении автоматики нет — значит пакеты от устройства до брокера не доходят (см. 10.1).
 
 Проверить конфигурацию:
 
@@ -238,6 +248,8 @@ ipconfig
 
 ### 7.2 Сделать Wi-Fi сеть Private, а не Public
 
+Если правило firewall создано с `-Profile Any` (см. 7.3), этот шаг не обязателен — правило работает в любом профиле. Но профиль Private всё равно правильнее для домашней сети.
+
 Через Windows Settings:
 
 1. Нажать `Win + I`.
@@ -266,6 +278,29 @@ Set-NetConnectionProfile -InterfaceAlias "Беспроводная сеть" -Ne
 
 ### 7.3 Открыть MQTT порт в Windows Firewall
 
+#### Рекомендуемый способ: одна команда в PowerShell
+
+Открыть PowerShell **от имени администратора** и выполнить:
+
+```powershell
+New-NetFirewallRule -DisplayName "Mosquitto MQTT 1883 LAN" -Direction Inbound -Protocol TCP -LocalPort 1883 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+```
+
+Что означают параметры:
+
+- `-Profile Any` — правило работает во всех профилях сети: Private, Public, Domain. Это важно: Windows иногда сам меняет профиль сети на Public после смены/перезагрузки роутера. Правило, созданное только для Private, в этот момент перестаёт действовать, и устройство теряет связь с брокером без видимой причины.
+- `-RemoteAddress LocalSubnet` — подключения разрешены только из локальной подсети (`192.168.1.0/24`). Из интернета порт `1883` по-прежнему недоступен, так что уровень защиты не ниже, чем у правила только для Private.
+
+Перезагрузка не нужна, правило действует сразу.
+
+Дополнительно можно разрешить ping — это упрощает диагностику в будущем (см. 10.1):
+
+```powershell
+New-NetFirewallRule -DisplayName "ICMPv4 Echo LAN" -Direction Inbound -Protocol ICMPv4 -IcmpType 8 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+```
+
+#### Альтернатива: через GUI
+
 1. Открыть **Windows Security**.
 2. Перейти в **Firewall & network protection**.
 3. Открыть **Advanced settings**.
@@ -278,11 +313,13 @@ Set-NetConnectionProfile -InterfaceAlias "Беспроводная сеть" -Ne
    1883
   ```
 9. Выбрать **Allow the connection**.
-10. Включить правило для **Private** сетей. Не включать для **Public**, если нет понимания риска.
+10. Отметить профили **Private** и **Public**. Если отметить только **Private**, правило перестанет работать, когда Windows переведёт домашнюю сеть в профиль Public. В разделе **Scope** ограничить **Remote IP address** значением **Local subnet** — тогда профиль Public не создаёт лишнего риска.
 11. Назвать правило:
   ```text
    Mosquitto MQTT 1883
   ```
+
+> Отключать Windows Firewall целиком (`Set-NetFirewallProfile -All -Enabled False`) не рекомендуется. Это открывает все порты ноутбука для любых устройств в домашней сети, а Windows Defender периодически включает firewall обратно — и та же проблема вернётся через несколько недель уже без очевидной причины.
 
 ### 7.4 (опционально) Сделать адрес брокера стабильным
 
@@ -395,7 +432,89 @@ secrets.json
 | Windows desktop client не подключается                                       | Нет `secrets.json` или он лежит не в той папке                                                                                                   | Положить `secrets.json` рядом с `secrets_template.json`; не использовать `settings.json` для MQTT                                     |
 | Сообщения появляются в неожиданных топиках                                   | Неверный topic prefix                                                                                                                            | Использовать prefix `/`; ожидаемые топики включают `/term_k` и `/work`                                                                |
 | Соединения пропадают через некоторое время                                   | Ноутбук ушёл в sleep или IP изменился                                                                                                            | Отключить sleep while plugged in; сделать DHCP reservation на роутере                                                                 |
+| Устройство подключается к WiFi, клиент на ноутбуке работает, но данных нет   | Windows Firewall блокирует входящие подключения из LAN на порт `1883`. Частая причина: правило было создано только для профиля Private, а Windows перевёл сеть в Public; или правило удалено после обновления Windows | См. 10.1. Создать правило с `-Profile Any`                                                                                            |
+| С другого устройства `ping` до ноутбука не проходит, но `arp` показывает MAC | Ноутбук в сети и отвечает на уровне 2, но отбрасывает входящие IP-пакеты. Это host firewall, а не роутер и не Mosquitto                          | См. 10.1                                                                                                                              |
 
+
+### 10.1 Устройство в WiFi, но MQTT-данных нет: пошаговая диагностика
+
+Реальный случай (июль 2026): брокер работал, desktop-клиент на ноутбуке был подключён к брокеру, IP ноутбука не менялся, настройки на устройстве были верны — но данных не было. Причина: Windows Firewall отбрасывал входящие подключения из локальной сети на порт `1883`.
+
+#### Ловушка в выводе `netstat`
+
+```text
+TCP    0.0.0.0:1883           0.0.0.0:0              LISTENING       3060
+TCP    192.168.1.84:1883      192.168.1.84:56232     ESTABLISHED     3060
+TCP    192.168.1.84:56232     192.168.1.84:1883      ESTABLISHED     8180
+```
+
+`LISTENING` на `0.0.0.0:1883` — правильно, брокер слушает все интерфейсы.
+
+Но пара `ESTABLISHED` здесь — это два процесса на одном и том же ноутбуке: PID 3060 это Mosquitto, PID 8180 это desktop-клиент. Трафик внутри одного компьютера идёт через loopback, и **Windows Firewall его не фильтрует** — даже когда указан LAN-адрес `192.168.1.84`.
+
+Вывод: работающий локальный клиент **не доказывает**, что внешние устройства могут подключиться. Нужна проверка со второго устройства.
+
+#### Шаг 1: проверить порт с другого устройства в той же сети
+
+С Mac или Linux:
+
+```bash
+nc -z -v -w 3 192.168.1.84 1883
+ping -c 3 192.168.1.84
+arp -n 192.168.1.84
+```
+
+С другого Windows-компьютера (PowerShell):
+
+```powershell
+Test-NetConnection 192.168.1.84 -Port 1883
+```
+
+Как читать результат:
+
+
+| Результат со второго устройства                                        | Что это значит                                                                                                              |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `Connection to 192.168.1.84 port 1883 succeeded!`                      | Путь открыт. Проблема не в сети — проверять настройки на устройстве: broker, port, prefix                                    |
+| `Operation timed out`, но `arp` показывает MAC ноутбука                 | Ноутбук в сети и отвечает на уровне 2, но отбрасывает входящие IP-пакеты. Это Windows Firewall или сторонний антивирус       |
+| `Connection refused`                                                   | Пакеты доходят, но на порту никто не слушает. Mosquitto не запущен или слушает только `localhost` — проверить `mosquitto.conf` |
+| `arp` пусто или `(incomplete)`                                         | Устройства не видят друг друга на уровне 2: разные сети, гостевая сеть или client isolation на роутере                       |
+
+
+Ответ на ARP при отсутствии ответа на ping и на TCP — надёжный признак того, что блокирует именно firewall на ноутбуке. Роутер в этом случае ни при чём: если бы работала изоляция клиентов, ARP-ответа тоже не было бы.
+
+#### Шаг 2: исправление
+
+Одна команда в PowerShell, запущенном **от имени администратора**:
+
+```powershell
+New-NetFirewallRule -DisplayName "Mosquitto MQTT 1883 LAN" -Direction Inbound -Protocol TCP -LocalPort 1883 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+```
+
+Подробнее про параметры — в разделе 7.3. Проверять профиль сети (Private/Public) при этом не нужно: `-Profile Any` покрывает все профили.
+
+#### Шаг 3: проверка
+
+1. Повторить `nc -z -v -w 3 192.168.1.84 1883` со второго устройства. Ожидается `succeeded`.
+2. Запустить на ноутбуке `mosquitto_sub -h 192.168.1.84 -p 1883 -t "#" -v`.
+3. Выключить и включить автоматику, подождать около минуты. Должны появиться топики `/term_k`, `/work` и другие.
+
+Если IP брокера не менялся, настройки на устройстве через `http://192.168.4.1` заново вводить не нужно.
+
+#### Если порт всё равно закрыт
+
+1. Проверить, нет ли блокирующего правила на этом порту. Правило `Block` всегда важнее правила `Allow`:
+  ```powershell
+   Get-NetFirewallPortFilter | Where-Object { $_.LocalPort -eq 1883 } | Get-NetFirewallRule | Format-Table DisplayName, Enabled, Direction, Action, Profile -AutoSize
+  ```
+2. Временно выключить firewall, проверить порт, **сразу включить обратно**:
+  ```powershell
+   Set-NetFirewallProfile -All -Enabled False
+   # проверить порт со второго устройства
+   Set-NetFirewallProfile -All -Enabled True
+  ```
+   Если с выключенным firewall порт открывается — дело в правилах, вернуться к пункту 1. Если порт по-прежнему закрыт — блокирует что-то другое.
+3. Сторонний антивирус (Kaspersky, ESET, Dr.Web, Avast и подобные) имеет собственный сетевой фильтр, который не отображается в настройках Windows Firewall. Нужно разрешить входящий TCP `1883` в настройках самого антивируса или отметить домашнюю сеть как доверенную.
 
 ---
 
@@ -438,6 +557,31 @@ mosquitto_sub -h 192.168.1.84 -p 1883 -t test/# -v
 
 :: Опубликовать через WLAN IP
 mosquitto_pub -h 192.168.1.84 -p 1883 -t test/hello -m "hello via WLAN IP"
+
+:: Подписаться на все топики (для проверки, приходят ли данные от устройства)
+mosquitto_sub -h 192.168.1.84 -p 1883 -t "#" -v
+```
+
+Windows Firewall, PowerShell от имени администратора:
+
+```powershell
+# Разрешить входящий MQTT из локальной сети во всех профилях
+New-NetFirewallRule -DisplayName "Mosquitto MQTT 1883 LAN" -Direction Inbound -Protocol TCP -LocalPort 1883 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+
+# Посмотреть все правила на порту 1883
+Get-NetFirewallPortFilter | Where-Object { $_.LocalPort -eq 1883 } | Get-NetFirewallRule | Format-Table DisplayName, Enabled, Direction, Action, Profile -AutoSize
+
+# Профиль сети (Private/Public) и профили firewall
+Get-NetConnectionProfile
+Get-NetFirewallProfile | Format-Table Name, Enabled, DefaultInboundAction
+```
+
+Проверка доступности брокера **со второго устройства** в той же сети (Mac/Linux):
+
+```bash
+nc -z -v -w 3 192.168.1.84 1883
+ping -c 3 192.168.1.84
+arp -n 192.168.1.84
 ```
 
 ---
@@ -483,6 +627,12 @@ MQTT брокер: 192.168.1.84
 TLS/SSL: выключен
 ```
 
+### 12.4 Правило Windows Firewall
+
+```powershell
+New-NetFirewallRule -DisplayName "Mosquitto MQTT 1883 LAN" -Direction Inbound -Protocol TCP -LocalPort 1883 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+```
+
 ---
 
 ## 13. Что делать при следующей установке с нуля
@@ -501,9 +651,12 @@ TLS/SSL: выключен
   ```
 5. Проверить IP ноутбука через `ipconfig`.
 6. Убедиться, что Wi-Fi profile = **Private**.
-7. Открыть TCP порт `1883` в Windows Firewall для Private networks.
+7. Открыть TCP порт `1883` в Windows Firewall одной командой в PowerShell от имени администратора:
+  ```powershell
+   New-NetFirewallRule -DisplayName "Mosquitto MQTT 1883 LAN" -Direction Inbound -Protocol TCP -LocalPort 1883 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+  ```
 8. Протестировать broker через `localhost`.
-9. Протестировать broker через WLAN IP, например `192.168.1.84`.
+9. Протестировать broker через WLAN IP, например `192.168.1.84`. Обязательно проверить порт **со второго устройства** в той же сети, а не только с ноутбука-брокера — локальная проверка не проходит через firewall и поэтому проходит успешно даже при закрытом порте (см. 10.1).
 10. Настроить Alco ESP через `ALCO_ESP` и `http://192.168.4.1`.
 11. Создать `secrets.json` рядом с `secrets_template.json` в desktop client.
 12. Проверить, что устройство и Windows client используют одинаковый broker IP, port и topic prefix `/`.
