@@ -197,6 +197,32 @@ def test_publish_work_mode_non_razgon_emits_work_only(monitor_fixture):
 
     assert emitted == [("work", "0")]
     assert monitor.pending_term_k_m_check is False
+    assert monitor._last_requested_work_mode == WorkState.STOP.value
+
+
+def test_publish_otbor_g_1_speed_republishes_work_from_last_request(monitor_fixture):
+    monitor = monitor_fixture
+    emitted = []
+    monitor.publishRequested.connect(lambda topic, payload: emitted.append((topic, payload)))
+    monitor._last_requested_work_mode = WorkState.OTBOR_GOLOV_POKAPELNO.value
+    monitor.otbor_g_1_spinbox.setValue(33)
+
+    monitor.publish_otbor_g_1_speed()
+
+    assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
+
+
+def test_publish_otbor_g_1_speed_prefers_flag_otb_over_last_request(monitor_fixture):
+    monitor = monitor_fixture
+    emitted = []
+    monitor.publishRequested.connect(lambda topic, payload: emitted.append((topic, payload)))
+    monitor._last_requested_work_mode = WorkState.OTBOR_GOLOV_POKAPELNO.value
+    monitor.all_latest_values["flag_otb"] = "отбор тела"
+    monitor.otbor_g_1_spinbox.setValue(33)
+
+    monitor.publish_otbor_g_1_speed()
+
+    assert emitted == [("otbor_g_1_new", "33")]
 
 
 def test_publish_work_mode_razgon_emits_sequence_and_starts_timer(monkeypatch, monitor_fixture):

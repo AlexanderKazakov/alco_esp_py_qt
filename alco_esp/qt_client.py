@@ -79,6 +79,7 @@ class AlcoEspMonitor(QMainWindow):
 
         self.pending_term_k_m_check = False
         self._term_k_m_check_timer = None
+        self._last_requested_work_mode = None
 
         # --- Initialize Sound Effect and Alarm Dialog (placeholder, actual init deferred) ---
         self.alarm_sound_effect = QSoundEffect(self)
@@ -527,11 +528,30 @@ class AlcoEspMonitor(QMainWindow):
             mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
             logger.info(f"Requesting to set work mode: {mode_name} ({mode_code})")
             self.publishRequested.emit(control_topics["work"], str(mode_code))
+            self._last_requested_work_mode = mode_code
             self.update_status(f"Запрос на установку режима: {mode_name} ({mode_code})")
 
         except Exception as e:
             logger.error(f"Error preparing work mode publication: {e}", exc_info=True)
             self.update_status(f"Ошибка подготовки публикации режима: {e}")
+
+    def _current_work_mode_code(self):
+        """Returns the active work mode from device telemetry, else last request."""
+        flag_otb = self.all_latest_values.get("flag_otb")
+        if flag_otb is not None:
+            flag_otb = str(flag_otb).strip()
+            for code, name in WORK_STATE_NAMES.items():
+                if name == flag_otb:
+                    return code
+        return self._last_requested_work_mode
+
+    def _republish_work_mode_if_already_active(self, mode_code):
+        """Re-sends work so stored takeoff parameters are applied in the running mode."""
+        if self._current_work_mode_code() != mode_code:
+            return
+        mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
+        logger.info(f"Re-publishing work mode so the new parameter is applied: {mode_name} ({mode_code})")
+        self.publishRequested.emit(control_topics["work"], str(mode_code))
 
     def publish_otbor_g_1_speed(self):
         """Publishes the speed for 'otbor golov 1'."""
@@ -539,6 +559,7 @@ class AlcoEspMonitor(QMainWindow):
             speed_val = int(self.otbor_g_1_spinbox.value())
             logger.info(f"Requesting to set otbor golov speed (PWM): {speed_val}")
             self.publishRequested.emit(control_topics["otbor_g_1_new"], str(speed_val))
+            self._republish_work_mode_if_already_active(WorkState.OTBOR_GOLOV_POKAPELNO.value)
             self.update_status(f"Запрос на ШИМ отбора голов: {speed_val}")
         except Exception as e:
             logger.error(f"Error preparing otbor golov speed publication: {e}", exc_info=True)
@@ -552,6 +573,7 @@ class AlcoEspMonitor(QMainWindow):
             log_msg = f"Requesting otbor tela T_stop={payload}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["term_c_max_new"], payload)
+            self._republish_work_mode_if_already_active(WorkState.OTBOR_TELA.value)
             self.update_status(f"Запрос T стоп отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_stop publication: {e}", exc_info=True)
@@ -565,6 +587,7 @@ class AlcoEspMonitor(QMainWindow):
             log_msg = f"Requesting otbor tela T_start={payload}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["term_c_min_new"], payload)
+            self._republish_work_mode_if_already_active(WorkState.OTBOR_TELA.value)
             self.update_status(f"Запрос T старт отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_start publication: {e}", exc_info=True)
@@ -577,6 +600,7 @@ class AlcoEspMonitor(QMainWindow):
             log_msg = f"Requesting otbor tela PWM={pwm_val}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["otbor_t_new"], str(pwm_val))
+            self._republish_work_mode_if_already_active(WorkState.OTBOR_TELA.value)
             self.update_status(f"Запрос ШИМ отбора тела: {pwm_val}%")
         except Exception as e:
             logger.error(f"Error preparing otbor tela PWM publication: {e}", exc_info=True)

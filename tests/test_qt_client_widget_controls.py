@@ -67,6 +67,50 @@ def test_otbor_golov_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publis
     assert monitor.status_label.text() == "Запрос на ШИМ отбора голов: 33"
 
 
+def test_otbor_golov_pwm_republishes_work_when_flag_otb_matches(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
+    assert monitor.status_label.text() == "Запрос на ШИМ отбора голов: 33"
+
+
+def test_otbor_golov_pwm_republishes_work_after_this_client_set_that_mode(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+
+    monitor.work_mode_combobox.setCurrentIndex(
+        monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
+    )
+    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert emitted == [("work", "9"), ("otbor_g_1_new", "33"), ("work", "9")]
+
+
+def test_otbor_golov_pwm_does_not_republish_work_when_in_other_mode(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    monitor.all_latest_values["flag_otb"] = "отбор тела"
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert emitted == [("otbor_g_1_new", "33")]
+
+
 def test_otbor_tela_t_stop_button_uses_spinbox_value(qtbot, widget_monitor, publish_capture, find_push_button):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
@@ -76,6 +120,19 @@ def test_otbor_tela_t_stop_button_uses_spinbox_value(qtbot, widget_monitor, publ
 
     assert emitted == [("term_c_max_new", "78.4")]
     assert monitor.status_label.text() == "Запрос T стоп отбора тела: 78.4°C"
+
+
+def test_otbor_tela_t_stop_republishes_work_when_flag_otb_matches(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    monitor.all_latest_values["flag_otb"] = "отбор тела"
+
+    monitor.term_c_max_telo_spinbox.setValue(78.4)
+    click_set_button(qtbot, monitor, find_push_button, index=2)
+
+    assert emitted == [("term_c_max_new", "78.4"), ("work", "8")]
 
 
 def test_otbor_tela_t_start_button_uses_spinbox_value(qtbot, widget_monitor, publish_capture, find_push_button):
@@ -89,6 +146,19 @@ def test_otbor_tela_t_start_button_uses_spinbox_value(qtbot, widget_monitor, pub
     assert monitor.status_label.text() == "Запрос T старт отбора тела: 77.1°C"
 
 
+def test_otbor_tela_t_start_republishes_work_when_flag_otb_matches(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    monitor.all_latest_values["flag_otb"] = "отбор тела"
+
+    monitor.term_c_min_telo_spinbox.setValue(77.1)
+    click_set_button(qtbot, monitor, find_push_button, index=3)
+
+    assert emitted == [("term_c_min_new", "77.1"), ("work", "8")]
+
+
 def test_otbor_tela_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publish_capture, find_push_button):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
@@ -98,6 +168,32 @@ def test_otbor_tela_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publish
 
     assert emitted == [("otbor_t_new", "42")]
     assert monitor.status_label.text() == "Запрос ШИМ отбора тела: 42%"
+
+
+def test_otbor_tela_pwm_republishes_work_when_flag_otb_matches(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    monitor.all_latest_values["flag_otb"] = "отбор тела"
+
+    monitor.otbor_t_spinbox.setValue(42)
+    click_set_button(qtbot, monitor, find_push_button, index=4)
+
+    assert emitted == [("otbor_t_new", "42"), ("work", "8")]
+
+
+def test_otbor_tela_pwm_does_not_republish_work_when_in_heads_mode(
+    qtbot, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
+
+    monitor.otbor_t_spinbox.setValue(42)
+    click_set_button(qtbot, monitor, find_push_button, index=4)
+
+    assert emitted == [("otbor_t_new", "42")]
 
 
 def test_reset_t_kub_button_updates_flags_and_status(qtbot, widget_monitor):

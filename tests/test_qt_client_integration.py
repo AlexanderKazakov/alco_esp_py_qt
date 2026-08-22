@@ -117,6 +117,34 @@ def test_integration_ui_commands_publish_expected_prefixed_topics(
     assert broker_messages[:5] == expected
 
 
+def test_integration_otbor_golov_pwm_republishes_active_work_mode(
+    qtbot,
+    integration_monitor,
+    integration_secrets,
+    mqtt_subscriber_factory,
+    find_push_button,
+):
+    monitor = integration_monitor
+    prefix = integration_secrets["username"]
+    broker_messages = mqtt_subscriber_factory(f"{prefix}/#")
+
+    monitor.work_mode_combobox.setCurrentIndex(
+        monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
+    )
+    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    _click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    qtbot.waitUntil(lambda: len(broker_messages) >= 3, timeout=6000)
+
+    assert broker_messages[:3] == [
+        (f"{prefix}/work", "9"),
+        (f"{prefix}/otbor_g_1_new", "33"),
+        (f"{prefix}/work", "9"),
+    ]
+
+
 def test_integration_razgon_ui_flow_publishes_term_k_r_before_work(
     qtbot,
     integration_monitor,
