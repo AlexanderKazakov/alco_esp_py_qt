@@ -66,7 +66,9 @@ pyinstaller ^
     --noconfirm ^
     --name "%APP_NAME%" ^
     --noconsole ^
+    --icon "%SCRIPT_DIR%\alco_esp\app_icon.ico" ^
     --add-data "%SCRIPT_DIR%\alco_esp\alarm.wav;.\alco_esp" ^
+    --add-data "%SCRIPT_DIR%\alco_esp\app_icon.png;.\alco_esp" ^
     --add-data "%SCRIPT_DIR%\alco_esp\secrets_template.json;.\alco_esp" ^
     --distpath "%DIST_DIR%" ^
     --workpath "%WORK_DIR%" ^

@@ -12,6 +12,11 @@ from PyQt5.QtMultimedia import QSoundEffect
 from collections import deque
 from datetime import datetime, timedelta
 
+from alco_esp.application_icon import (
+    apply_application_icon,
+    apply_window_icon,
+    apply_windows_app_user_model_id,
+)
 from alco_esp.constants import *
 from alco_esp.logging import *
 from alco_esp.settings import *
@@ -148,6 +153,7 @@ class AlcoEspMonitor(QMainWindow):
         self.secrets = secrets
         logger.info("Initializing AlcoEspMonitor main window.")
         self.setWindowTitle("Alco ESP Real-Time Monitor")
+        apply_window_icon(self)
 
         # --- Initialize Settings ---
         self.settings = load_settings()
@@ -1462,7 +1468,9 @@ class AlcoEspMonitor(QMainWindow):
 if __name__ == '__main__':
     logger.info("Application starting...")
 
+    apply_windows_app_user_model_id()
     app = QApplication(sys.argv)
+    apply_application_icon(app)
     secrets = load_secrets_with_gui_feedback()
     main_window = AlcoEspMonitor(secrets)
 

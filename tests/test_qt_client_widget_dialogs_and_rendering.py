@@ -299,3 +299,8 @@ def test_ustanovit_buttons_stay_wide_enough_after_current_values_render(widget_m
         text_width = button.fontMetrics().boundingRect(button.text()).width()
         assert _button_contents_width(button) >= text_width
         assert button.width() >= button.sizeHint().width()
+
+
+def test_monitor_window_uses_application_icon(widget_monitor):
+    assert widget_monitor.windowIcon().isNull() is False
+

@@ -3,6 +3,7 @@
 ## Module map
 
 - `[qt_client.py](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/qt_client.py)`: main PyQt window, controls, plotting, alarms, and application lifecycle.
+- `[application_icon.py](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/application_icon.py)`: app icon loading for the window, Dock, and Windows taskbar.
 - `[mqtt_utils.py](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/mqtt_utils.py)`: MQTT worker object running in a separate Qt thread.
 - `[settings.py](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/settings.py)`: persisted UI/signal settings (`settings.json`) and settings dialog.
 - `[logging.py](/Users/kazakovaleksandr/code/alco_esp_py_qt/alco_esp/logging.py)`: app logger + CSV rotating loggers.

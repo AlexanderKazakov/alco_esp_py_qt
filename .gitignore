@@ -9,3 +9,4 @@ __pycache__
 /alco_esp/secrets.json
 /alco_esp/settings.json
 .mplconfig/
+alco_esp/.DS_Store
