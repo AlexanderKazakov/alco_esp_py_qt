@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
 from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 
 from alco_esp.logging import logger
-from alco_esp.constants import APP_ROOT_DIR, STYLE_ALARM_TRIGGERED
+from alco_esp.constants import APP_ROOT_DIR, STYLE_ALARM_TRIGGERED, WORK_STATE_NAMES
 
 SECRETS_FILE_PATH = os.path.join(APP_ROOT_DIR, "secrets.json")
 
@@ -99,6 +99,79 @@ class CustomNavigationToolbar(NavigationToolbar):
         self.canvas.draw()
 
 
+TOPIC_MEANINGS = {
+    "term_d": "Температура в дефлегматоре, °C",
+    "term_c": "Температура в царге, °C",
+    "term_k": "Температура в кубе, °C",
+    "power": "Измеренная мощность, Вт",
+    "press_a": "Атмосферное давление, мм рт. ст.",
+    "flag_otb": "Флаг отбора",
+    "term_v": "Дополнительная температура, °C",
+    "term_vent": "Температура вентиляции, °C",
+    "count_vent": "Счётчик вентиляции",
+    "num_error": "Код ошибки",
+    "term_d_m": "Аварийная температура в дефлегматоре, °C",
+    "press_c_m": "Аварийное давление в кубе",
+    "term_c_max": "Температура старт-стопа, °C",
+    "term_c_min": "Температура возобновления отбора, °C",
+    "term_k_m": "Максимальная температура в кубе, °C",
+    "term_nasos": "Температура включения клапана воды, °C",
+    "power_m": "Стабилизируемая мощность, Вт",
+    "otbor": "Текущий ШИМ отбора, %",
+    "time_stop": "Максимальное время старт-стопа, с",
+    "otbor_minus": "Декремент отбора тела",
+    "min_otb": "Период отбора голов периодикой, с",
+    "sek_otb": "Время открытого клапана при отборе голов периодикой, с",
+    "otbor_g_1": "ШИМ отбора голов покапельно, %",
+    "otbor_g_2": "ШИМ отбора подголовников, %",
+    "otbor_t": "ШИМ отбора тела, %",
+    "delta_t": "ΔT старт-стопа, °C",
+    "term_k_r": "Температура куба для окончания разгона, °C",
+    "work": "Команда режима работы",
+    "kontaktor": "Контактор",
+}
+
+
+def _topic_lookup_key(topic):
+    return str(topic).strip().lower()
+
+
+def decipher_all_data_value(topic, raw_value):
+    """Returns a Russian explanation of an MQTT topic and, when known, its value."""
+    lookup_key = _topic_lookup_key(topic)
+    is_new_value = lookup_key.endswith("_new")
+    base_key = lookup_key[:-4] if is_new_value else lookup_key
+    meaning = TOPIC_MEANINGS.get(base_key)
+    if meaning is None:
+        return "—" if not is_new_value else "Новое значение"
+
+    decoded_value = _decode_topic_value(base_key, raw_value)
+    if is_new_value:
+        meaning = f"Новое значение: {meaning}"
+    if decoded_value is None:
+        return meaning
+    return f"{meaning}: {decoded_value}"
+
+
+def _decode_topic_value(topic_key, raw_value):
+    if raw_value is None:
+        return None
+    text = str(raw_value).strip()
+    if topic_key == "work":
+        try:
+            code = int(float(text))
+        except (ValueError, TypeError):
+            return None
+        return WORK_STATE_NAMES.get(code)
+    if topic_key == "kontaktor":
+        if text == "1":
+            return "включен"
+        if text == "0":
+            return "выключен"
+        return None
+    return None
+
+
 class AllDataViewerDialog(QDialog):
     def __init__(self, data_dict, parent=None):
         super().__init__(parent)
@@ -112,10 +185,11 @@ class AllDataViewerDialog(QDialog):
         layout.addWidget(self.log_button)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Параметр", "Значение"])
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Параметр", "Значение", "Расшифровка"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.setSortingEnabled(True)
 
         layout.addWidget(self.table)
@@ -140,6 +214,7 @@ class AllDataViewerDialog(QDialog):
         for row, (key, value) in enumerate(sorted_items):
             self.table.setItem(row, 0, QTableWidgetItem(str(key)))
             self.table.setItem(row, 1, QTableWidgetItem(str(value)))
+            self.table.setItem(row, 2, QTableWidgetItem(decipher_all_data_value(key, value)))
 
         self.table.resizeRowsToContents()
         self.table.setSortingEnabled(True)

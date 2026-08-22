@@ -111,6 +111,7 @@ def test_all_data_viewer_dialog_sorts_rows_deterministically(qtbot):
     dialog = child_dialogs.AllDataViewerDialog({"b": 2, "a": 1})
     qtbot.addWidget(dialog)
 
+    assert dialog.table.columnCount() == 3
     assert dialog.table.item(0, 0).text() == "a"
     assert dialog.table.item(1, 0).text() == "b"
 
@@ -124,6 +125,32 @@ def test_all_data_viewer_update_data_replaces_rows_and_resorts(qtbot):
     assert dialog.table.rowCount() == 2
     assert dialog.table.item(0, 0).text() == "b"
     assert dialog.table.item(1, 0).text() == "c"
+
+
+def test_all_data_viewer_deciphers_known_topics_and_coded_values(qtbot):
+    dialog = child_dialogs.AllDataViewerDialog(
+        {
+            "work": "8",
+            "otbor": "3",
+            "KONTAKTOR": "1",
+            "otbor_g_1_new": "33",
+            "unknown_topic": "1",
+        }
+    )
+    qtbot.addWidget(dialog)
+
+    rows = {
+        dialog.table.item(row, 0).text(): (
+            dialog.table.item(row, 1).text(),
+            dialog.table.item(row, 2).text(),
+        )
+        for row in range(dialog.table.rowCount())
+    }
+    assert rows["work"] == ("8", "Команда режима работы: отбор тела")
+    assert rows["otbor"] == ("3", "Текущий ШИМ отбора, %")
+    assert rows["KONTAKTOR"] == ("1", "Контактор: включен")
+    assert rows["otbor_g_1_new"] == ("33", "Новое значение: ШИМ отбора голов покапельно, %")
+    assert rows["unknown_topic"] == ("1", "—")
 
 
 class DummyMainWindow(QMainWindow):
