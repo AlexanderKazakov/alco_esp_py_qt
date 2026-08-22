@@ -1,7 +1,9 @@
+import bisect
 import signal
 import sys
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QSpacerItem, QSizePolicy, QComboBox, QScrollArea, QFrame)
@@ -27,6 +29,15 @@ MQTT_DATA_TIMEOUT_SECONDS = 60.0
 # --- Maximum number of temperature steps to store for plotting ---
 TEMPERATURE_DATA_WINDOW_SIZE = 10**6
 
+# Pixel radius used to treat the cursor as "on" a chart marker.
+CHART_HOVER_MAX_PIXEL_DISTANCE = 18
+
+CHART_HOVER_SERIES_LABELS = {
+    "term_d": "T дефл.",
+    "term_c": "T царга",
+    "term_k": "T куб",
+}
+
 # Left panel default width. The panel may grow if native widgets (macOS
 # QPushButton in particular) need more space than this.
 CONTROLS_PANEL_MIN_WIDTH = 380
@@ -40,6 +51,58 @@ control_topics = {
     "term_c_min_new": "term_c_min_new",
     "otbor_t_new": "otbor_t_new"
 }
+
+
+def nearest_sample_index(sorted_times, target_time):
+    """Returns the index of the sample whose time is closest to target_time."""
+    sample_count = len(sorted_times)
+    if sample_count == 0:
+        return None
+    insert_index = bisect.bisect_left(sorted_times, target_time)
+    if insert_index <= 0:
+        return 0
+    if insert_index >= sample_count:
+        return sample_count - 1
+    previous_time = sorted_times[insert_index - 1]
+    next_time = sorted_times[insert_index]
+    if abs(next_time - target_time) < abs(target_time - previous_time):
+        return insert_index
+    return insert_index - 1
+
+
+def find_nearest_index_within_pixel_distance(x_pixels, y_pixels, hover_x, hover_y, max_distance):
+    """Returns the closest point index if it is within max_distance pixels."""
+    if len(x_pixels) == 0:
+        return None
+    distance_squared = (np.asarray(x_pixels, dtype=float) - hover_x) ** 2 + (
+        np.asarray(y_pixels, dtype=float) - hover_y
+    ) ** 2
+    nearest_index = int(np.argmin(distance_squared))
+    if distance_squared[nearest_index] > max_distance * max_distance:
+        return None
+    return nearest_index
+
+
+def naive_datetime_from_chart_x(value):
+    """Converts a plotted X value to a naive datetime for hover text."""
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+    converted = mdates.num2date(value)
+    return converted.replace(tzinfo=None)
+
+
+def format_chart_hover_text(point_time, labeled_values):
+    """Builds Russian hover text with the snapped time and all Y-series values."""
+    time_str = point_time.strftime("%H:%M:%S.%f")[:-3]
+    lines = [f"Время: {time_str}"]
+    for label, value in labeled_values:
+        if value is None:
+            lines.append(f"{label}: -")
+        else:
+            lines.append(f"{label}: {value:.2f} °C")
+    return "\n".join(lines)
 
 
 # --- Main Application Window ---
@@ -124,6 +187,8 @@ class AlcoEspMonitor(QMainWindow):
         self.setup_controls()
 
         self.lines = {}
+        self._chart_hover_point_key = None
+        self._chart_hover_connected = False
 
         self.configure_plots()
         self.setup_mqtt()
@@ -627,7 +692,9 @@ class AlcoEspMonitor(QMainWindow):
         self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
         self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=10, maxticks=10))
         self.ax.tick_params(axis='x', rotation=30)
-        
+
+        self._setup_chart_hover_annotation()
+
         self.figure.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     def setup_mqtt(self):
@@ -830,6 +897,143 @@ class AlcoEspMonitor(QMainWindow):
             self.canvas.draw()
         except Exception as e:
             logger.error(f"Error drawing canvas: {e}", exc_info=True)
+
+    def _setup_chart_hover_annotation(self):
+        """Creates the chart hover popup and connects mouse events once."""
+        self.chart_hover_annotation = self.ax.annotate(
+            "",
+            xy=(0, 0),
+            xytext=(14, 14),
+            textcoords="offset points",
+            bbox={"boxstyle": "round,pad=0.35", "fc": "#fff8dc", "alpha": 0.92, "ec": "#444444"},
+            arrowprops={"arrowstyle": "->", "color": "#444444"},
+            fontsize=12,
+            visible=False,
+            zorder=20,
+            annotation_clip=False,
+        )
+        self._chart_hover_point_key = None
+        if self._chart_hover_connected:
+            return
+        self.canvas.mpl_connect("motion_notify_event", self._on_chart_mouse_move)
+        self.canvas.mpl_connect("figure_leave_event", self._hide_chart_hover)
+        self._chart_hover_connected = True
+
+    def _hide_chart_hover(self, event=None):
+        """Hides the chart hover popup if it is currently shown."""
+        if not getattr(self, "chart_hover_annotation", None):
+            return
+        if not self.chart_hover_annotation.get_visible() and self._chart_hover_point_key is None:
+            return
+        self.chart_hover_annotation.set_visible(False)
+        self._chart_hover_point_key = None
+        self.canvas.draw_idle()
+
+    def _on_chart_mouse_move(self, event):
+        """Shows exact X/Y readings when the cursor is near a plotted point."""
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
+            self._hide_chart_hover()
+            return
+
+        hover_point = self._find_chart_hover_point(event)
+        if hover_point is None:
+            self._hide_chart_hover()
+            return
+
+        topic, sample_index, point_time, point_value = hover_point
+        hover_key = (topic, sample_index, point_time)
+        if hover_key == self._chart_hover_point_key and self.chart_hover_annotation.get_visible():
+            return
+
+        hover_text = format_chart_hover_text(
+            point_time,
+            self._collect_chart_hover_readings(point_time),
+        )
+        self.chart_hover_annotation.xy = (point_time, point_value)
+        self.chart_hover_annotation.set_text(hover_text)
+        self.chart_hover_annotation.set_visible(True)
+        self._chart_hover_point_key = hover_key
+        self.canvas.draw_idle()
+
+    def _find_chart_hover_point(self, event):
+        """Finds the nearest visible chart marker within the hover pixel radius."""
+        x_min, x_max = self.ax.get_xlim()
+        if x_max <= x_min:
+            return None
+        axes_bbox = self.ax.get_window_extent()
+        if axes_bbox.width <= 0 or axes_bbox.height <= 0:
+            return None
+
+        x_pixels_per_unit = axes_bbox.width / (x_max - x_min)
+        if x_pixels_per_unit <= 0:
+            return None
+        x_slop = CHART_HOVER_MAX_PIXEL_DISTANCE / x_pixels_per_unit
+        window_left = naive_datetime_from_chart_x(event.xdata - x_slop)
+        window_right = naive_datetime_from_chart_x(event.xdata + x_slop)
+
+        closest_point = None
+        closest_distance_squared = CHART_HOVER_MAX_PIXEL_DISTANCE ** 2
+
+        for topic in CHART_TEMPERATURE_TOPICS:
+            line = self.lines.get(topic)
+            if line is None or not line.get_visible():
+                continue
+            x_values = line.get_xdata()
+            y_values = line.get_ydata()
+            sample_count = len(x_values)
+            if sample_count == 0:
+                continue
+
+            left_index = bisect.bisect_left(x_values, window_left)
+            right_index = bisect.bisect_right(x_values, window_right)
+            if left_index >= right_index:
+                continue
+
+            x_window = x_values[left_index:right_index]
+            y_window = np.asarray(y_values[left_index:right_index], dtype=float)
+            x_window_num = np.asarray(self.ax.convert_xunits(x_window), dtype=float)
+            pixel_points = self.ax.transData.transform(np.column_stack([x_window_num, y_window]))
+            local_index = find_nearest_index_within_pixel_distance(
+                pixel_points[:, 0],
+                pixel_points[:, 1],
+                event.x,
+                event.y,
+                CHART_HOVER_MAX_PIXEL_DISTANCE,
+            )
+            if local_index is None:
+                continue
+            distance_squared = (pixel_points[local_index, 0] - event.x) ** 2 + (
+                pixel_points[local_index, 1] - event.y
+            ) ** 2
+            if distance_squared > closest_distance_squared:
+                continue
+            sample_index = left_index + local_index
+            closest_distance_squared = float(distance_squared)
+            closest_point = (
+                topic,
+                sample_index,
+                naive_datetime_from_chart_x(x_values[sample_index]),
+                float(y_values[sample_index]),
+            )
+        return closest_point
+
+    def _collect_chart_hover_readings(self, snapped_time):
+        """Returns all temperature series values nearest to the hovered time."""
+        labeled_values = []
+        for topic in CHART_TEMPERATURE_TOPICS:
+            label = CHART_HOVER_SERIES_LABELS[topic]
+            line = self.lines.get(topic)
+            if line is None or not line.get_visible():
+                labeled_values.append((label, None))
+                continue
+            x_values = line.get_xdata()
+            y_values = line.get_ydata()
+            sample_index = nearest_sample_index(x_values, snapped_time)
+            if sample_index is None:
+                labeled_values.append((label, None))
+                continue
+            labeled_values.append((label, float(y_values[sample_index])))
+        return labeled_values
 
     def update_text_displays(self):
         """Updates text labels with latest values."""
