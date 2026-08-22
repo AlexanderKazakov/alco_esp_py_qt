@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QPushButton, QStyle, QStyleOptionButton
 
 from alco_esp import qt_client
 
@@ -257,3 +258,44 @@ def test_telemetry_non_numeric_control_values_render_exactly(widget_monitor):
     assert monitor.term_c_max_telo_label.text() == "T стоп, °C (сейчас <b>N/A</b>):"
     assert monitor.term_c_min_telo_label.text() == "T старт, °C (сейчас <b>not_ready</b>):"
     assert monitor.term_k_m_label.text() == "Остановка разгона при T куба: <b>pending</b>"
+
+
+def _ustanovit_buttons(monitor):
+    return [button for button in monitor.findChildren(QPushButton) if button.text() == "Установить"]
+
+
+def _button_contents_width(button):
+    style_option = QStyleOptionButton()
+    button.initStyleOption(style_option)
+    return button.style().subElementRect(QStyle.SE_PushButtonContents, style_option, button).width()
+
+
+def test_ustanovit_buttons_are_wide_enough_for_full_text(widget_monitor):
+    monitor = widget_monitor
+    buttons = _ustanovit_buttons(monitor)
+    assert len(buttons) == 5
+    assert monitor.controls_widget.width() >= qt_client.CONTROLS_PANEL_MIN_WIDTH
+
+    for button in buttons:
+        text_width = button.fontMetrics().boundingRect(button.text()).width()
+        assert _button_contents_width(button) >= text_width
+        assert button.width() >= button.sizeHint().width()
+
+
+def test_ustanovit_buttons_stay_wide_enough_after_current_values_render(widget_monitor):
+    monitor = widget_monitor
+    monitor.all_latest_values.update(
+        {
+            "otbor_g_1": "15",
+            "term_c_max": "78.8",
+            "term_c_min": "78.2",
+            "otbor_t": "35",
+            "term_k_m": "100.0",
+        }
+    )
+    monitor.update_text_displays()
+
+    for button in _ustanovit_buttons(monitor):
+        text_width = button.fontMetrics().boundingRect(button.text()).width()
+        assert _button_contents_width(button) >= text_width
+        assert button.width() >= button.sizeHint().width()

@@ -1,4 +1,5 @@
 import signal
+import sys
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -25,6 +26,11 @@ MQTT_DATA_TIMEOUT_SECONDS = 60.0
 
 # --- Maximum number of temperature steps to store for plotting ---
 TEMPERATURE_DATA_WINDOW_SIZE = 10**6
+
+# Left panel default width. The panel may grow if native widgets (macOS
+# QPushButton in particular) need more space than this.
+CONTROLS_PANEL_MIN_WIDTH = 380
+CONTROLS_SCROLL_AREA_EXTRA_WIDTH = 20
 
 # Topics for publishing control values (will be prefixed)
 control_topics = {
@@ -88,7 +94,6 @@ class AlcoEspMonitor(QMainWindow):
 
         # --- Left Controls Panel ---
         self.controls_widget = QWidget()
-        self.controls_widget.setFixedWidth(380)
         self.controls_layout = QVBoxLayout(self.controls_widget)
 
         # --- Wrap controls_widget in a QScrollArea ---
@@ -96,7 +101,6 @@ class AlcoEspMonitor(QMainWindow):
         self.controls_scroll_area.setWidgetResizable(True)
         self.controls_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.controls_scroll_area.setWidget(self.controls_widget)
-        self.controls_scroll_area.setFixedWidth(400)
 
         self.main_layout.addWidget(self.controls_scroll_area)
 
@@ -192,9 +196,13 @@ class AlcoEspMonitor(QMainWindow):
         logger.debug("Setting up UI controls.")
         controls_grid_layout = QGridLayout()
         controls_grid_layout.setSpacing(10)
-        # Use a 6-column layout to enforce a 4:1:1 ratio for controls
-        for i in range(6):
+        # Labels (columns 0-3) take leftover space. Spinboxes and
+        # "Установить" buttons keep their size hint so native macOS
+        # button padding cannot clip the first letter.
+        for i in range(4):
             controls_grid_layout.setColumnStretch(i, 1)
+        controls_grid_layout.setColumnStretch(4, 0)
+        controls_grid_layout.setColumnStretch(5, 0)
         row = 0
 
         # --- Current State Display ---
@@ -391,8 +399,29 @@ class AlcoEspMonitor(QMainWindow):
         controls_grid_layout.addWidget(self.settings_button, row, 0, 1, 6)
         row += 1
 
+        set_value_buttons = [
+            self.set_work_mode_button,
+            set_otbor_g_1_button,
+            set_term_c_max_button,
+            set_term_c_min_button,
+            set_otbor_t_button,
+        ]
+        set_value_button_width = max(button.sizeHint().width() for button in set_value_buttons)
+        controls_grid_layout.setColumnMinimumWidth(5, set_value_button_width)
+
         self.controls_layout.addLayout(controls_grid_layout)
         self.controls_layout.addStretch(1)
+        self._fit_controls_panel_to_layout()
+
+    def _fit_controls_panel_to_layout(self):
+        """Set the left panel width. macOS native buttons need more than 380px."""
+        if sys.platform == "darwin":
+            needed_width = self.controls_widget.layout().minimumSize().width()
+            panel_width = max(CONTROLS_PANEL_MIN_WIDTH, needed_width)
+        else:
+            panel_width = CONTROLS_PANEL_MIN_WIDTH
+        self.controls_widget.setFixedWidth(panel_width)
+        self.controls_scroll_area.setFixedWidth(panel_width + CONTROLS_SCROLL_AREA_EXTRA_WIDTH)
 
     def open_all_data_viewer(self):
         if self.all_data_viewer_dialog is None:
