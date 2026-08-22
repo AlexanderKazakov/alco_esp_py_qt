@@ -197,30 +197,77 @@ def test_publish_work_mode_non_razgon_emits_work_only(monitor_fixture):
 
     assert emitted == [("work", "0")]
     assert monitor.pending_term_k_m_check is False
-    assert monitor._last_requested_work_mode == WorkState.STOP.value
+    assert not hasattr(monitor, "_last_requested_work_mode")
 
 
-def test_publish_otbor_g_1_speed_republishes_work_from_last_request(monitor_fixture):
+def test_publish_otbor_g_1_speed_does_not_republish_without_device_mode(
+    monkeypatch,
+    monitor_fixture,
+):
     monitor = monitor_fixture
     emitted = []
+    scheduled_callbacks = []
     monitor.publishRequested.connect(lambda topic, payload: emitted.append((topic, payload)))
-    monitor._last_requested_work_mode = WorkState.OTBOR_GOLOV_POKAPELNO.value
+    monkeypatch.setattr(
+        qt_client.QTimer,
+        "singleShot",
+        staticmethod(lambda delay, callback: scheduled_callbacks.append((delay, callback))),
+    )
     monitor.otbor_g_1_spinbox.setValue(33)
 
     monitor.publish_otbor_g_1_speed()
+
+    assert emitted == [("otbor_g_1_new", "33")]
+    assert scheduled_callbacks == []
+
+
+def test_publish_otbor_g_1_speed_republishes_reported_mode_after_delay(
+    monkeypatch,
+    monitor_fixture,
+):
+    monitor = monitor_fixture
+    emitted = []
+    scheduled_callbacks = []
+    monitor.publishRequested.connect(lambda topic, payload: emitted.append((topic, payload)))
+    monkeypatch.setattr(
+        qt_client.QTimer,
+        "singleShot",
+        staticmethod(lambda delay, callback: scheduled_callbacks.append((delay, callback))),
+    )
+    monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
+    monitor.otbor_g_1_spinbox.setValue(33)
+
+    monitor.publish_otbor_g_1_speed()
+
+    assert emitted == [("otbor_g_1_new", "33")]
+    assert len(scheduled_callbacks) == 1
+    delay, callback = scheduled_callbacks[0]
+    assert delay == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
+
+    callback()
 
     assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
 
 
-def test_publish_otbor_g_1_speed_prefers_flag_otb_over_last_request(monitor_fixture):
+def test_delayed_work_mode_republish_is_skipped_if_device_mode_changes(
+    monkeypatch,
+    monitor_fixture,
+):
     monitor = monitor_fixture
     emitted = []
+    scheduled_callbacks = []
     monitor.publishRequested.connect(lambda topic, payload: emitted.append((topic, payload)))
-    monitor._last_requested_work_mode = WorkState.OTBOR_GOLOV_POKAPELNO.value
-    monitor.all_latest_values["flag_otb"] = "отбор тела"
+    monkeypatch.setattr(
+        qt_client.QTimer,
+        "singleShot",
+        staticmethod(lambda delay, callback: scheduled_callbacks.append((delay, callback))),
+    )
+    monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
     monitor.otbor_g_1_spinbox.setValue(33)
-
     monitor.publish_otbor_g_1_speed()
+
+    monitor.all_latest_values["flag_otb"] = "отбор тела"
+    scheduled_callbacks[0][1]()
 
     assert emitted == [("otbor_g_1_new", "33")]
 

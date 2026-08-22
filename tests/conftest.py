@@ -278,7 +278,11 @@ def integration_monitor(qtbot, monkeypatch, default_settings, integration_secret
     from alco_esp import qt_client
 
     monkeypatch.setattr(qt_client, "load_settings", lambda: default_settings.copy())
-    monkeypatch.setattr(qt_client.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    monkeypatch.setattr(
+        qt_client.AlcoEspMonitor,
+        "initialize_sound_and_alarm_system",
+        lambda self: None,
+    )
     monkeypatch.setattr(qt_client, "all_data_logger", NoopLogger())
     monkeypatch.setattr(qt_client, "main_data_logger", NoopLogger())
 

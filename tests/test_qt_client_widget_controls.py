@@ -1,11 +1,22 @@
 from PyQt5.QtCore import Qt
 
+from alco_esp import qt_client
 from alco_esp.constants import STYLE_MONITORING, WorkState
 
 
 def click_set_button(qtbot, monitor, find_push_button, index):
     """Clicks one of the duplicate 'Установить' buttons by stable positional index."""
     qtbot.mouseClick(find_push_button(monitor, "Установить", index), Qt.LeftButton)
+
+
+def capture_scheduled_callbacks(monkeypatch):
+    scheduled_callbacks = []
+    monkeypatch.setattr(
+        qt_client.QTimer,
+        "singleShot",
+        staticmethod(lambda delay, callback: scheduled_callbacks.append((delay, callback))),
+    )
+    return scheduled_callbacks
 
 
 def test_work_mode_stop_click_emits_and_resets_combobox(qtbot, widget_monitor, publish_capture):
@@ -68,24 +79,31 @@ def test_otbor_golov_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publis
 
 
 def test_otbor_golov_pwm_republishes_work_when_flag_otb_matches(
-    qtbot, widget_monitor, publish_capture, find_push_button
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
     monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
 
     monitor.otbor_g_1_spinbox.setValue(33)
     click_set_button(qtbot, monitor, find_push_button, index=1)
 
+    assert emitted == [("otbor_g_1_new", "33")]
+    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
+
+    scheduled_callbacks[0][1]()
+
     assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
     assert monitor.status_label.text() == "Запрос на ШИМ отбора голов: 33"
 
 
-def test_otbor_golov_pwm_republishes_work_after_this_client_set_that_mode(
-    qtbot, widget_monitor, publish_capture, find_push_button
+def test_otbor_golov_pwm_does_not_republish_from_unconfirmed_work_request(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
 
     monitor.work_mode_combobox.setCurrentIndex(
         monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
@@ -95,7 +113,8 @@ def test_otbor_golov_pwm_republishes_work_after_this_client_set_that_mode(
     monitor.otbor_g_1_spinbox.setValue(33)
     click_set_button(qtbot, monitor, find_push_button, index=1)
 
-    assert emitted == [("work", "9"), ("otbor_g_1_new", "33"), ("work", "9")]
+    assert emitted == [("work", "9"), ("otbor_g_1_new", "33")]
+    assert scheduled_callbacks == []
 
 
 def test_otbor_golov_pwm_does_not_republish_work_when_in_other_mode(
@@ -123,14 +142,20 @@ def test_otbor_tela_t_stop_button_uses_spinbox_value(qtbot, widget_monitor, publ
 
 
 def test_otbor_tela_t_stop_republishes_work_when_flag_otb_matches(
-    qtbot, widget_monitor, publish_capture, find_push_button
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
     monitor.all_latest_values["flag_otb"] = "отбор тела"
 
     monitor.term_c_max_telo_spinbox.setValue(78.4)
     click_set_button(qtbot, monitor, find_push_button, index=2)
+
+    assert emitted == [("term_c_max_new", "78.4")]
+    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
+
+    scheduled_callbacks[0][1]()
 
     assert emitted == [("term_c_max_new", "78.4"), ("work", "8")]
 
@@ -147,14 +172,20 @@ def test_otbor_tela_t_start_button_uses_spinbox_value(qtbot, widget_monitor, pub
 
 
 def test_otbor_tela_t_start_republishes_work_when_flag_otb_matches(
-    qtbot, widget_monitor, publish_capture, find_push_button
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
     monitor.all_latest_values["flag_otb"] = "отбор тела"
 
     monitor.term_c_min_telo_spinbox.setValue(77.1)
     click_set_button(qtbot, monitor, find_push_button, index=3)
+
+    assert emitted == [("term_c_min_new", "77.1")]
+    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
+
+    scheduled_callbacks[0][1]()
 
     assert emitted == [("term_c_min_new", "77.1"), ("work", "8")]
 
@@ -171,14 +202,20 @@ def test_otbor_tela_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publish
 
 
 def test_otbor_tela_pwm_republishes_work_when_flag_otb_matches(
-    qtbot, widget_monitor, publish_capture, find_push_button
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
     monitor.all_latest_values["flag_otb"] = "отбор тела"
 
     monitor.otbor_t_spinbox.setValue(42)
     click_set_button(qtbot, monitor, find_push_button, index=4)
+
+    assert emitted == [("otbor_t_new", "42")]
+    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
+
+    scheduled_callbacks[0][1]()
 
     assert emitted == [("otbor_t_new", "42"), ("work", "8")]
 

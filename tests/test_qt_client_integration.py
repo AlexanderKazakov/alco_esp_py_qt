@@ -121,25 +121,31 @@ def test_integration_otbor_golov_pwm_republishes_active_work_mode(
     qtbot,
     integration_monitor,
     integration_secrets,
+    mqtt_publisher_client,
     mqtt_subscriber_factory,
     find_push_button,
 ):
     monitor = integration_monitor
     prefix = integration_secrets["username"]
-    broker_messages = mqtt_subscriber_factory(f"{prefix}/#")
 
-    monitor.work_mode_combobox.setCurrentIndex(
-        monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
+    _publish_prefixed(
+        mqtt_publisher_client,
+        integration_secrets,
+        "flag_otb",
+        "отбор голов покапельно",
     )
-    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
+    qtbot.waitUntil(
+        lambda: monitor.all_latest_values.get("flag_otb") == "отбор голов покапельно",
+        timeout=4000,
+    )
+    broker_messages = mqtt_subscriber_factory(f"{prefix}/#")
 
     monitor.otbor_g_1_spinbox.setValue(33)
     _click_set_button(qtbot, monitor, find_push_button, index=1)
 
-    qtbot.waitUntil(lambda: len(broker_messages) >= 3, timeout=6000)
+    qtbot.waitUntil(lambda: len(broker_messages) >= 2, timeout=7000)
 
-    assert broker_messages[:3] == [
-        (f"{prefix}/work", "9"),
+    assert broker_messages[:2] == [
         (f"{prefix}/otbor_g_1_new", "33"),
         (f"{prefix}/work", "9"),
     ]
