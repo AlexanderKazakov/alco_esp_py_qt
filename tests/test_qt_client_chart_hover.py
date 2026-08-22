@@ -56,6 +56,73 @@ def test_naive_datetime_from_chart_x_strips_timezone():
     assert qt_client.naive_datetime_from_chart_x(qt_client.mdates.date2num(naive)) == naive
 
 
+def test_chart_hover_text_offset_points_stays_up_right_when_there_is_room():
+    x_offset, y_offset = qt_client.chart_hover_text_offset_points(
+        point_x=100,
+        point_y=100,
+        axes_x0=0,
+        axes_y0=0,
+        axes_x1=800,
+        axes_y1=600,
+        box_width=200,
+        box_height=100,
+        offset_points=14,
+    )
+
+    assert (x_offset, y_offset) == (14, 14)
+
+
+def test_chart_hover_text_offset_points_mirrors_left_near_right_edge():
+    x_offset, y_offset = qt_client.chart_hover_text_offset_points(
+        point_x=780,
+        point_y=100,
+        axes_x0=0,
+        axes_y0=0,
+        axes_x1=800,
+        axes_y1=600,
+        box_width=200,
+        box_height=100,
+        offset_points=14,
+    )
+
+    assert x_offset == -14
+    assert y_offset == 14
+
+
+def test_chart_hover_text_offset_points_mirrors_down_near_top_edge():
+    x_offset, y_offset = qt_client.chart_hover_text_offset_points(
+        point_x=100,
+        point_y=580,
+        axes_x0=0,
+        axes_y0=0,
+        axes_x1=800,
+        axes_y1=600,
+        box_width=200,
+        box_height=100,
+        offset_points=14,
+    )
+
+    assert x_offset == 14
+    assert y_offset == -14
+
+
+def test_chart_hover_text_offset_points_picks_side_with_more_room_when_both_overflow():
+    x_offset, y_offset = qt_client.chart_hover_text_offset_points(
+        point_x=90,
+        point_y=40,
+        axes_x0=0,
+        axes_y0=0,
+        axes_x1=120,
+        axes_y1=80,
+        box_width=200,
+        box_height=100,
+        offset_points=14,
+    )
+
+    assert x_offset == -14
+    assert y_offset == 14
+
+
 def _fill_chart_series(monitor, now):
     monitor.timestamps["term_d"].append(now)
     monitor.data["term_d"].append(56.78)
@@ -130,3 +197,45 @@ def test_chart_hover_popup_hides_when_cursor_leaves_figure(qtbot, widget_monitor
     monitor._hide_chart_hover()
     assert monitor.chart_hover_annotation.get_visible() is False
     assert monitor._chart_hover_point_key is None
+
+
+def _fill_chart_series_range(monitor, start, point_count, step_seconds=10):
+    for index in range(point_count):
+        sample_time = start + timedelta(seconds=index * step_seconds)
+        monitor.timestamps["term_d"].append(sample_time)
+        monitor.data["term_d"].append(44.46)
+        monitor.timestamps["term_c"].append(sample_time)
+        monitor.data["term_c"].append(44.0)
+        monitor.timestamps["term_k"].append(sample_time)
+        monitor.data["term_k"].append(43.01)
+    monitor.update_plots()
+    monitor.canvas.draw()
+
+
+def test_chart_hover_popup_stays_to_the_right_near_left_edge(qtbot, widget_monitor):
+    monitor = widget_monitor
+    monitor.resize(1100, 700)
+    qtbot.waitUntil(lambda: monitor.canvas.width() > 100)
+
+    _fill_chart_series_range(monitor, datetime(2026, 8, 22, 8, 0, 0), 30)
+    monitor._on_chart_mouse_move(_mouse_event_at_data_point(monitor, "term_c", 0))
+
+    x_offset, y_offset = monitor.chart_hover_annotation.xyann
+    assert x_offset > 0
+    assert y_offset > 0
+    assert monitor.chart_hover_annotation.get_ha() == "left"
+    assert monitor.chart_hover_annotation.get_va() == "bottom"
+
+
+def test_chart_hover_popup_mirrors_left_near_right_edge(qtbot, widget_monitor):
+    monitor = widget_monitor
+    monitor.resize(1100, 700)
+    qtbot.waitUntil(lambda: monitor.canvas.width() > 100)
+
+    _fill_chart_series_range(monitor, datetime(2026, 8, 22, 8, 0, 0), 30)
+    monitor._on_chart_mouse_move(_mouse_event_at_data_point(monitor, "term_c", 29))
+
+    x_offset, _y_offset = monitor.chart_hover_annotation.xyann
+    assert x_offset < 0
+    assert monitor.chart_hover_annotation.get_ha() == "right"
+    assert monitor.chart_hover_annotation.get_visible() is True

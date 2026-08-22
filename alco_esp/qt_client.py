@@ -31,6 +31,9 @@ TEMPERATURE_DATA_WINDOW_SIZE = 10**6
 
 # Pixel radius used to treat the cursor as "on" a chart marker.
 CHART_HOVER_MAX_PIXEL_DISTANCE = 18
+CHART_HOVER_OFFSET_POINTS = 14
+CHART_HOVER_DEFAULT_BOX_WIDTH_PX = 200.0
+CHART_HOVER_DEFAULT_BOX_HEIGHT_PX = 100.0
 
 CHART_HOVER_SERIES_LABELS = {
     "term_d": "T дефл.",
@@ -91,6 +94,36 @@ def naive_datetime_from_chart_x(value):
         return value
     converted = mdates.num2date(value)
     return converted.replace(tzinfo=None)
+
+
+def chart_hover_text_offset_points(
+    point_x,
+    point_y,
+    axes_x0,
+    axes_y0,
+    axes_x1,
+    axes_y1,
+    box_width,
+    box_height,
+    offset_points=CHART_HOVER_OFFSET_POINTS,
+):
+    """Picks an offset so the popup stays inside the axes when there is room."""
+    x_offset = offset_points
+    y_offset = offset_points
+    fits_right = point_x + box_width <= axes_x1
+    fits_left = point_x - box_width >= axes_x0
+    if not fits_right and fits_left:
+        x_offset = -offset_points
+    elif not fits_right and not fits_left:
+        x_offset = offset_points if (axes_x1 - point_x) >= (point_x - axes_x0) else -offset_points
+
+    fits_top = point_y + box_height <= axes_y1
+    fits_bottom = point_y - box_height >= axes_y0
+    if not fits_top and fits_bottom:
+        y_offset = -offset_points
+    elif not fits_top and not fits_bottom:
+        y_offset = offset_points if (axes_y1 - point_y) >= (point_y - axes_y0) else -offset_points
+    return x_offset, y_offset
 
 
 def format_chart_hover_text(point_time, labeled_values):
@@ -903,7 +936,7 @@ class AlcoEspMonitor(QMainWindow):
         self.chart_hover_annotation = self.ax.annotate(
             "",
             xy=(0, 0),
-            xytext=(14, 14),
+            xytext=(CHART_HOVER_OFFSET_POINTS, CHART_HOVER_OFFSET_POINTS),
             textcoords="offset points",
             bbox={"boxstyle": "round,pad=0.35", "fc": "#fff8dc", "alpha": 0.92, "ec": "#444444"},
             arrowprops={"arrowstyle": "->", "color": "#444444"},
@@ -949,11 +982,45 @@ class AlcoEspMonitor(QMainWindow):
             point_time,
             self._collect_chart_hover_readings(point_time),
         )
-        self.chart_hover_annotation.xy = (point_time, point_value)
-        self.chart_hover_annotation.set_text(hover_text)
-        self.chart_hover_annotation.set_visible(True)
+        self._place_chart_hover_annotation(point_time, point_value, hover_text)
         self._chart_hover_point_key = hover_key
         self.canvas.draw_idle()
+
+    def _place_chart_hover_annotation(self, point_time, point_value, hover_text):
+        """Shows the hover popup and mirrors it when the point is near an axes edge."""
+        annotation = self.chart_hover_annotation
+        annotation.xy = (point_time, point_value)
+        annotation.set_text(hover_text)
+        annotation.set_horizontalalignment("left")
+        annotation.set_verticalalignment("bottom")
+        annotation.set_position((CHART_HOVER_OFFSET_POINTS, CHART_HOVER_OFFSET_POINTS))
+        annotation.set_visible(True)
+
+        point_x, point_y = self.ax.transData.transform(
+            (self.ax.convert_xunits(point_time), point_value)
+        )
+        axes_bbox = self.ax.get_window_extent()
+        box_width = CHART_HOVER_DEFAULT_BOX_WIDTH_PX
+        box_height = CHART_HOVER_DEFAULT_BOX_HEIGHT_PX
+        renderer = self.canvas.get_renderer()
+        if renderer is not None:
+            measured_box = annotation.get_window_extent(renderer)
+            box_width = measured_box.width
+            box_height = measured_box.height
+
+        x_offset, y_offset = chart_hover_text_offset_points(
+            point_x,
+            point_y,
+            axes_bbox.x0,
+            axes_bbox.y0,
+            axes_bbox.x1,
+            axes_bbox.y1,
+            box_width,
+            box_height,
+        )
+        annotation.set_horizontalalignment("right" if x_offset < 0 else "left")
+        annotation.set_verticalalignment("top" if y_offset < 0 else "bottom")
+        annotation.set_position((x_offset, y_offset))
 
     def _find_chart_hover_point(self, event):
         """Finds the nearest visible chart marker within the hover pixel radius."""
