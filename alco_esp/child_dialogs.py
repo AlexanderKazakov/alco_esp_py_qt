@@ -259,3 +259,30 @@ class AlarmNotificationDialog(QDialog):
         if self.sound_effect and self.sound_effect.isPlaying():
             self.sound_effect.stop()
         super().closeEvent(event)
+
+
+class WorkModeUnknownDialog(QDialog):
+    """
+    Asks the operator to set the work mode again after a takeoff parameter change.
+    A plain QDialog is used because QMessageBox can play a system sound on Windows.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Режим работы неизвестен")
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        self.message_label = QLabel(
+            "Текущий режим работы неизвестен. Чтобы устройство применило новое значение, "
+            "выберите и установите режим работы заново."
+        )
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+
+        self.ok_button = QPushButton("ОК")
+        self.ok_button.clicked.connect(self.accept)
+        layout.addWidget(self.ok_button)
+
+        self.setMinimumWidth(350)
+        self.adjustSize()

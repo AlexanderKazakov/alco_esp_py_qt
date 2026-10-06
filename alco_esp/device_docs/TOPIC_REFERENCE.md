@@ -15,7 +15,7 @@ These topics are published by the device. You subscribe to them to read the devi
 - `term_k`: Температура в кубе (Temperature in still pot)
 - `power`: Измеренная мощность (Measured power)
 - `press_a`: Атмосферное давление (Atmospheric pressure)
-- `flag_otb`: Режим работы (Operating mode)
+- `flag_otb`: Флаг отбора (takeoff state). The official documentation calls it "режим работы", but it is not the `work` mode. Values seen on the real device: `Golov` (heads takeoff), `Telo` (body takeoff), `OFF` (no takeoff, also the start-stop pause in body takeoff), `End` (takeoff stopped, then `OFF` after about a minute), `Error`.
 - `term_v`: (Unlisted in documentation, observed value: `0.0`)
 - `term_vent`: (Unlisted in documentation, observed value: `30.0`)
 - `count_vent`: (Unlisted in documentation, observed value: `0`)
@@ -53,7 +53,7 @@ For these, the device publishes its current state on one topic, and you publish 
 ## 3. Direct Command Topics
 
 ### `work`
-This is a multi-command topic. You publish a number to change the device's main operating mode. The device listens to this topic but does not publish to it unless commanded.
+This is a multi-command topic. You publish a number to change the device's main operating mode. The device listens to this topic but never publishes it. The broker does not retain it. So a client knows the current mode only from the `work` commands it saw.
 
 - `0`: Стоп (Stop)
 - `1`: Старт (Start)

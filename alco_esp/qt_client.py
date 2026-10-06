@@ -64,6 +64,15 @@ control_topics = {
 }
 
 
+def parse_work_mode_code(payload):
+    """Returns the work mode code from a work payload, or None if the payload is not a known mode."""
+    try:
+        mode_code = int(float(str(payload).strip()))
+    except (TypeError, ValueError):
+        return None
+    return mode_code if mode_code in WORK_STATE_NAMES else None
+
+
 def nearest_sample_index(sorted_times, target_time):
     """Returns the index of the sample whose time is closest to target_time."""
     sample_count = len(sorted_times)
@@ -184,6 +193,11 @@ class AlcoEspMonitor(QMainWindow):
 
         self.pending_term_k_m_check = False
         self._term_k_m_check_timer = None
+
+        # The device does not publish its work mode. This is the last work command seen on the broker,
+        # or None if the app is not sure about it.
+        self._last_work_command = None
+        self.work_mode_unknown_dialog = None
 
         # --- Initialize Sound Effect and Alarm Dialog (placeholder, actual init deferred) ---
         self.alarm_sound_effect = QSoundEffect(self)
@@ -386,6 +400,21 @@ class AlcoEspMonitor(QMainWindow):
         self.set_work_mode_button = QPushButton("Установить")
         self.set_work_mode_button.clicked.connect(self.publish_selected_work_mode)
         controls_grid_layout.addWidget(self.set_work_mode_button, row, 5, 1, 1)
+        row += 1
+
+        self.last_work_command_label = QLabel()
+        self.last_work_command_label.setWordWrap(True)
+        self.last_work_command_label.setStyleSheet("padding: 2px;")
+        controls_grid_layout.addWidget(self.last_work_command_label, row, 0, 1, 6)
+        row += 1
+        self._set_last_work_command(None)
+
+        last_work_command_note_label = QLabel(
+            "Устройство не сообщает режим работы. Это последняя команда, отправленная устройству."
+        )
+        last_work_command_note_label.setWordWrap(True)
+        last_work_command_note_label.setStyleSheet("color: gray; padding: 0px 2px;")
+        controls_grid_layout.addWidget(last_work_command_note_label, row, 0, 1, 6)
         row += 1
 
         self.term_k_m_label = QLabel("Остановка разгона при T куба: -")
@@ -640,35 +669,74 @@ class AlcoEspMonitor(QMainWindow):
             logger.error(f"Error preparing work mode publication: {e}", exc_info=True)
             self.update_status(f"Ошибка подготовки публикации режима: {e}")
 
-    def _current_work_mode_code(self):
-        """Returns the active work mode reported by the device."""
-        flag_otb = self.all_latest_values.get("flag_otb")
-        if flag_otb is not None:
-            flag_otb = str(flag_otb).strip()
-            for code, name in WORK_STATE_NAMES.items():
-                if name == flag_otb:
-                    return code
-        return None
+    def _set_last_work_command(self, mode_code):
+        """Stores the last work command and shows it under the work mode picker."""
+        self._last_work_command = mode_code
+        if mode_code is None:
+            self.last_work_command_label.setText("Последняя команда режима работы: неизвестна")
+        else:
+            self.last_work_command_label.setText(
+                f"Последняя команда режима работы: {WORK_STATE_NAMES[mode_code]} ({mode_code})"
+            )
 
-    def _schedule_work_mode_republish_if_active(self, mode_code):
-        """Schedules a work-mode replay when device telemetry reports that mode."""
-        if self._current_work_mode_code() != mode_code:
-            return
+    @pyqtSlot()
+    def forget_last_work_command(self):
+        """Forgets the last work command, because the app can miss commands while disconnected."""
+        if self._last_work_command is not None:
+            logger.info(f"MQTT disconnected. Last work command {self._last_work_command} is now unknown.")
+        self._set_last_work_command(None)
+
+    def _is_work_mode_confirmed(self, mode_code):
+        """Returns True if the last work command is mode_code and flag_otb agrees with it."""
+        if self._last_work_command != mode_code:
+            return False
+        flag_otb = str(self.all_latest_values.get("flag_otb", "")).strip()
+        return flag_otb in FLAG_OTB_VALUES_BY_WORK_MODE[mode_code]
+
+    def _schedule_work_mode_republish_or_warn(self, mode_code):
+        """
+        The device applies a new takeoff parameter only after work is set again.
+        If the device is confirmed in mode_code, schedules a work re-send.
+        If the last work command is another mode, does nothing. The device uses the new value when that mode starts.
+        Otherwise asks the operator to set the work mode again.
+        """
         mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
-        logger.info(
-            f"Scheduling work mode replay in {WORK_MODE_REPUBLISH_DELAY_MS} ms: "
-            f"{mode_name} ({mode_code})"
+        if self._is_work_mode_confirmed(mode_code):
+            logger.info(
+                f"Scheduling work mode replay in {WORK_MODE_REPUBLISH_DELAY_MS} ms: "
+                f"{mode_name} ({mode_code})"
+            )
+            QTimer.singleShot(
+                WORK_MODE_REPUBLISH_DELAY_MS,
+                lambda: self._republish_work_mode_if_active(mode_code),
+            )
+            return
+        if self._last_work_command is not None and self._last_work_command != mode_code:
+            logger.info(
+                f"Not re-sending work: last work command is {self._last_work_command}, "
+                f"the parameter is for {mode_name} ({mode_code})"
+            )
+            return
+        logger.warning(
+            f"Not re-sending work: {mode_name} ({mode_code}) is not confirmed. "
+            f"Last work command: {self._last_work_command}, flag_otb: {self.all_latest_values.get('flag_otb')}"
         )
-        QTimer.singleShot(
-            WORK_MODE_REPUBLISH_DELAY_MS,
-            lambda: self._republish_work_mode_if_active(mode_code),
-        )
+        self._show_work_mode_unknown_dialog()
+
+    def _show_work_mode_unknown_dialog(self):
+        """Shows the popup that asks the operator to set the work mode again. Only one popup is open at a time."""
+        if self.work_mode_unknown_dialog is None:
+            self.work_mode_unknown_dialog = WorkModeUnknownDialog(self)
+        self.work_mode_unknown_dialog.show()
+        self.work_mode_unknown_dialog.raise_()
+        self.work_mode_unknown_dialog.activateWindow()
 
     def _republish_work_mode_if_active(self, mode_code):
-        """Re-sends work if the device still reports the expected active mode."""
-        if self._current_work_mode_code() != mode_code:
-            return
+        """Re-sends work if the device is still confirmed in the expected mode."""
         mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
+        if not self._is_work_mode_confirmed(mode_code):
+            logger.info(f"Work mode replay skipped, {mode_name} ({mode_code}) is no longer confirmed")
+            return
         logger.info(f"Re-publishing active work mode: {mode_name} ({mode_code})")
         self.publishRequested.emit(control_topics["work"], str(mode_code))
 
@@ -678,7 +746,7 @@ class AlcoEspMonitor(QMainWindow):
             speed_val = int(self.otbor_g_1_spinbox.value())
             logger.info(f"Requesting to set otbor golov speed (PWM): {speed_val}")
             self.publishRequested.emit(control_topics["otbor_g_1_new"], str(speed_val))
-            self._schedule_work_mode_republish_if_active(WorkState.OTBOR_GOLOV_POKAPELNO.value)
+            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_GOLOV_POKAPELNO.value)
             self.update_status(f"Запрос на ШИМ отбора голов: {speed_val}")
         except Exception as e:
             logger.error(f"Error preparing otbor golov speed publication: {e}", exc_info=True)
@@ -692,7 +760,7 @@ class AlcoEspMonitor(QMainWindow):
             log_msg = f"Requesting otbor tela T_stop={payload}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["term_c_max_new"], payload)
-            self._schedule_work_mode_republish_if_active(WorkState.OTBOR_TELA.value)
+            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_TELA.value)
             self.update_status(f"Запрос T стоп отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_stop publication: {e}", exc_info=True)
@@ -706,7 +774,7 @@ class AlcoEspMonitor(QMainWindow):
             log_msg = f"Requesting otbor tela T_start={payload}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["term_c_min_new"], payload)
-            self._schedule_work_mode_republish_if_active(WorkState.OTBOR_TELA.value)
+            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_TELA.value)
             self.update_status(f"Запрос T старт отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_start publication: {e}", exc_info=True)
@@ -719,7 +787,7 @@ class AlcoEspMonitor(QMainWindow):
             log_msg = f"Requesting otbor tela PWM={pwm_val}"
             logger.info(log_msg)
             self.publishRequested.emit(control_topics["otbor_t_new"], str(pwm_val))
-            self._schedule_work_mode_republish_if_active(WorkState.OTBOR_TELA.value)
+            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_TELA.value)
             self.update_status(f"Запрос ШИМ отбора тела: {pwm_val}%")
         except Exception as e:
             logger.error(f"Error preparing otbor tela PWM publication: {e}", exc_info=True)
@@ -766,6 +834,7 @@ class AlcoEspMonitor(QMainWindow):
         self.mqtt_thread.started.connect(self.mqtt_worker.run)
         self.mqtt_worker.messageReceived.connect(self.handle_message)
         self.mqtt_worker.connectionStatus.connect(self.update_status)
+        self.mqtt_worker.disconnected.connect(self.forget_last_work_command)
         # Connect the main window's publish request signal to the worker's slot
         # Note: This connection happens across threads, Qt handles it.
         self.publishRequested.connect(self.mqtt_worker.publish_message)
@@ -798,6 +867,14 @@ class AlcoEspMonitor(QMainWindow):
         # --- Check for term_k_m confirmation if a check is pending ---
         if self.pending_term_k_m_check and topic == "term_k_m":
             self.check_term_k_m_confirmation(payload_str)
+
+        # --- Track the last work command. The device never publishes work. ---
+        if topic == "work":
+            self._set_last_work_command(parse_work_mode_code(payload_str))
+        elif topic == "flag_otb" and payload_str.strip() in FLAG_OTB_TAKEOFF_STOPPED_VALUES:
+            if self._last_work_command is not None:
+                logger.info(f"flag_otb={payload_str.strip()}. Last work command {self._last_work_command} is now unknown.")
+            self._set_last_work_command(None)
 
         # --- CSV Logging for all the device data  ---
         try:

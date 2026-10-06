@@ -10,6 +10,7 @@ class MqttWorker(QObject):
     """
     messageReceived = pyqtSignal(str, str) # topic, payload
     connectionStatus = pyqtSignal(str)    # status message
+    disconnected = pyqtSignal()           # Signal emitted on every disconnect from the broker
     finished = pyqtSignal()               # Signal emitted when the worker is done
 
     def __init__(self, broker, port, username, password):  #, topics_to_subscribe):
@@ -51,6 +52,7 @@ class MqttWorker(QObject):
          log_msg = f"Отключено от MQTT брокера (rc={rc})"
          logger.warning(log_msg) # Using warning for disconnect
          self.connectionStatus.emit(log_msg)
+         self.disconnected.emit()
          if rc != 0:
              # Paho's loop_start() handles reconnection attempts automatically.
              logger.warning("Unexpected disconnection. Paho-MQTT will attempt to reconnect.")

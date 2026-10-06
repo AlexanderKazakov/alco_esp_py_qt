@@ -46,7 +46,7 @@ def test_integration_telemetry_updates_labels_end_to_end(
     _publish_prefixed(mqtt_publisher_client, integration_secrets, "term_k", "58.9")
     _publish_prefixed(mqtt_publisher_client, integration_secrets, "power", "1200.2")
     _publish_prefixed(mqtt_publisher_client, integration_secrets, "press_a", "760.5")
-    _publish_prefixed(mqtt_publisher_client, integration_secrets, "flag_otb", "разгон")
+    _publish_prefixed(mqtt_publisher_client, integration_secrets, "flag_otb", "Golov")
 
     qtbot.waitUntil(
         lambda: (
@@ -55,7 +55,7 @@ def test_integration_telemetry_updates_labels_end_to_end(
             and monitor.term_k_label.text() == "T куб:     58.9 °C"
             and monitor.power_label.text() == "Мощность: 1200.2 Вт"
             and monitor.press_a_label.text() == "Атм. давл.: 760.5 мм.рт.ст"
-            and monitor.flag_otb_label.text() == "Флаг отбора: разгон"
+            and monitor.flag_otb_label.text() == "Флаг отбора: Golov"
         ),
         timeout=6000,
     )
@@ -128,16 +128,18 @@ def test_integration_otbor_golov_pwm_republishes_active_work_mode(
     monitor = integration_monitor
     prefix = integration_secrets["username"]
 
-    _publish_prefixed(
-        mqtt_publisher_client,
-        integration_secrets,
-        "flag_otb",
-        "отбор голов покапельно",
+    # The app learns the last work command from the broker echo of its own publish.
+    monitor.work_mode_combobox.setCurrentIndex(
+        monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
     )
+    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
     qtbot.waitUntil(
-        lambda: monitor.all_latest_values.get("flag_otb") == "отбор голов покапельно",
+        lambda: monitor.last_work_command_label.text()
+        == "Последняя команда режима работы: отбор голов покапельно (9)",
         timeout=4000,
     )
+    _publish_prefixed(mqtt_publisher_client, integration_secrets, "flag_otb", "Golov")
+    qtbot.waitUntil(lambda: monitor.all_latest_values.get("flag_otb") == "Golov", timeout=4000)
     broker_messages = mqtt_subscriber_factory(f"{prefix}/#")
 
     monitor.otbor_g_1_spinbox.setValue(33)
@@ -149,6 +151,24 @@ def test_integration_otbor_golov_pwm_republishes_active_work_mode(
         (f"{prefix}/otbor_g_1_new", "33"),
         (f"{prefix}/work", "9"),
     ]
+
+
+def test_integration_mqtt_disconnect_forgets_last_work_command(qtbot, integration_monitor):
+    monitor = integration_monitor
+
+    monitor.work_mode_combobox.setCurrentIndex(monitor.work_mode_combobox.findData(WorkState.OTBOR_TELA.value))
+    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
+    qtbot.waitUntil(
+        lambda: monitor.last_work_command_label.text() == "Последняя команда режима работы: отбор тела (8)",
+        timeout=4000,
+    )
+
+    monitor.mqtt_worker.client.disconnect()
+
+    qtbot.waitUntil(
+        lambda: monitor.last_work_command_label.text() == "Последняя команда режима работы: неизвестна",
+        timeout=4000,
+    )
 
 
 def test_integration_razgon_ui_flow_publishes_term_k_r_before_work(

@@ -28,6 +28,8 @@
   2. then publish `work=4`.
   3. wait for `term_k_m` confirmation or timeout alarm.
 - Keep this sequence intact when refactoring command logic.
+- The device never publishes `work`. `flag_otb` is the takeoff state (`Golov`, `Telo`, `OFF`, `End`, `Error`), not the `work` mode.
+- After a takeoff parameter change, `work` is re-sent only if the last `work` command seen on the broker is that mode and `flag_otb` agrees with it (`FLAG_OTB_VALUES_BY_WORK_MODE`). The last `work` command is forgotten on MQTT disconnect and on `flag_otb` `End`/`Error`.
 
 ### 3) Threading model
 

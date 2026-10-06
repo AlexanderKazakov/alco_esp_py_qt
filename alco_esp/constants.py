@@ -32,6 +32,18 @@ WORK_STATE_NAMES = {
     WorkState.OTBOR_PODGOLOVNIKOV.value: "отбор подголовников"
 }
 
+# flag_otb is not a work mode. The real device reports the takeoff state in it:
+# "Golov", "Telo", "OFF", "End" or "Error".
+# These flag_otb values confirm that a takeoff work mode is still active.
+# In body takeoff the device reports "OFF" during the start-stop pause.
+FLAG_OTB_VALUES_BY_WORK_MODE = {
+    WorkState.OTBOR_GOLOV_POKAPELNO.value: {"Golov"},
+    WorkState.OTBOR_TELA.value: {"Telo", "OFF"},
+}
+
+# flag_otb values that the device reports when a takeoff stops.
+FLAG_OTB_TAKEOFF_STOPPED_VALUES = {"End", "Error"}
+
 CHART_TEMPERATURE_TOPICS = ["term_d", "term_c", "term_k"]
 
 TOPICS_OF_MAIN_INTEREST = CHART_TEMPERATURE_TOPICS + ["power", "press_a", "flag_otb"]

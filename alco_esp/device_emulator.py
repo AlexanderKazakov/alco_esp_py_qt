@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-from alco_esp.constants import WorkState, WORK_STATE_NAMES
+from alco_esp.constants import WorkState
 
 
 # --- Secrets Management ---
@@ -52,6 +52,20 @@ client_id = "python_device_simulator"
 topic_prefix = f"{username}/"
 
 
+def flag_otb_for_work_mode(work_mode):
+    """
+    Returns the flag_otb value that the real device reports in this work mode.
+    Mode 7 was never seen in real device logs, so "Golov" for mode 7 is a guess.
+    """
+    if work_mode in (WorkState.OTBOR_GOLOV_PERIODIKOY.value, WorkState.OTBOR_GOLOV_POKAPELNO.value):
+        return "Golov"
+    if work_mode == WorkState.OTBOR_TELA.value:
+        return "Telo"
+    if work_mode == WorkState.STOP.value:
+        return "End"
+    return "OFF"
+
+
 # Начальные значения параметров устройства
 device_state = {
     # Read-Only Status
@@ -60,7 +74,7 @@ device_state = {
     "term_d": 58.5,        # Температура в дефлегматоре
     "power": 0.0,          # Измеренная мощность
     "press_a": 760.0,      # Атмосферное давление
-    "flag_otb": WORK_STATE_NAMES[WorkState.STOP.value], # Режим работы (публикуемый)
+    "flag_otb": "OFF",     # Состояние отбора: Golov, Telo, OFF, End или Error. Это не режим работы
     "term_v": 0.0,
     "term_vent": 30.0,
     "count_vent": 0,
@@ -123,7 +137,7 @@ def on_message(client, userdata, msg):
             if device_state["work"] != requested_work_mode:
                 print(f"on_message: Получена команда ИЗМЕНИТЬ режим работы на: {requested_work_mode}")
                 device_state["work"] = requested_work_mode
-                device_state["flag_otb"] = WORK_STATE_NAMES.get(requested_work_mode, f"Unknown({requested_work_mode})") # Sync flag_otb
+                device_state["flag_otb"] = flag_otb_for_work_mode(requested_work_mode)
                 print(f"on_message: Режим работы изменен на: {device_state['work']}, Флаг отбора: '{device_state['flag_otb']}'")
             else:
                 # Message received, but it matches the current state. Ignore it (or log for debugging).

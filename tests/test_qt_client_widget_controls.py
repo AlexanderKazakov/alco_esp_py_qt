@@ -1,6 +1,8 @@
+import pytest
 from PyQt5.QtCore import Qt
 
 from alco_esp import qt_client
+from alco_esp.child_dialogs import WorkModeUnknownDialog
 from alco_esp.constants import STYLE_MONITORING, WorkState
 
 
@@ -17,6 +19,17 @@ def capture_scheduled_callbacks(monkeypatch):
         staticmethod(lambda delay, callback: scheduled_callbacks.append((delay, callback))),
     )
     return scheduled_callbacks
+
+
+def work_mode_unknown_dialogs(monitor):
+    return monitor.findChildren(WorkModeUnknownDialog)
+
+
+BODY_TAKEOFF_PARAMETER_BUTTONS = [
+    pytest.param(2, "term_c_max_telo_spinbox", 78.4, ("term_c_max_new", "78.4"), id="t_stop"),
+    pytest.param(3, "term_c_min_telo_spinbox", 77.1, ("term_c_min_new", "77.1"), id="t_start"),
+    pytest.param(4, "otbor_t_spinbox", 42, ("otbor_t_new", "42"), id="pwm"),
+]
 
 
 def test_work_mode_stop_click_emits_and_resets_combobox(qtbot, widget_monitor, publish_capture):
@@ -78,58 +91,6 @@ def test_otbor_golov_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publis
     assert monitor.status_label.text() == "Запрос на ШИМ отбора голов: 33"
 
 
-def test_otbor_golov_pwm_republishes_work_when_flag_otb_matches(
-    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
-):
-    monitor = widget_monitor
-    emitted = publish_capture(monitor)
-    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
-    monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
-
-    monitor.otbor_g_1_spinbox.setValue(33)
-    click_set_button(qtbot, monitor, find_push_button, index=1)
-
-    assert emitted == [("otbor_g_1_new", "33")]
-    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
-
-    scheduled_callbacks[0][1]()
-
-    assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
-    assert monitor.status_label.text() == "Запрос на ШИМ отбора голов: 33"
-
-
-def test_otbor_golov_pwm_does_not_republish_from_unconfirmed_work_request(
-    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
-):
-    monitor = widget_monitor
-    emitted = publish_capture(monitor)
-    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
-
-    monitor.work_mode_combobox.setCurrentIndex(
-        monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
-    )
-    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
-
-    monitor.otbor_g_1_spinbox.setValue(33)
-    click_set_button(qtbot, monitor, find_push_button, index=1)
-
-    assert emitted == [("work", "9"), ("otbor_g_1_new", "33")]
-    assert scheduled_callbacks == []
-
-
-def test_otbor_golov_pwm_does_not_republish_work_when_in_other_mode(
-    qtbot, widget_monitor, publish_capture, find_push_button
-):
-    monitor = widget_monitor
-    emitted = publish_capture(monitor)
-    monitor.all_latest_values["flag_otb"] = "отбор тела"
-
-    monitor.otbor_g_1_spinbox.setValue(33)
-    click_set_button(qtbot, monitor, find_push_button, index=1)
-
-    assert emitted == [("otbor_g_1_new", "33")]
-
-
 def test_otbor_tela_t_stop_button_uses_spinbox_value(qtbot, widget_monitor, publish_capture, find_push_button):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
@@ -139,25 +100,6 @@ def test_otbor_tela_t_stop_button_uses_spinbox_value(qtbot, widget_monitor, publ
 
     assert emitted == [("term_c_max_new", "78.4")]
     assert monitor.status_label.text() == "Запрос T стоп отбора тела: 78.4°C"
-
-
-def test_otbor_tela_t_stop_republishes_work_when_flag_otb_matches(
-    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
-):
-    monitor = widget_monitor
-    emitted = publish_capture(monitor)
-    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
-    monitor.all_latest_values["flag_otb"] = "отбор тела"
-
-    monitor.term_c_max_telo_spinbox.setValue(78.4)
-    click_set_button(qtbot, monitor, find_push_button, index=2)
-
-    assert emitted == [("term_c_max_new", "78.4")]
-    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
-
-    scheduled_callbacks[0][1]()
-
-    assert emitted == [("term_c_max_new", "78.4"), ("work", "8")]
 
 
 def test_otbor_tela_t_start_button_uses_spinbox_value(qtbot, widget_monitor, publish_capture, find_push_button):
@@ -171,25 +113,6 @@ def test_otbor_tela_t_start_button_uses_spinbox_value(qtbot, widget_monitor, pub
     assert monitor.status_label.text() == "Запрос T старт отбора тела: 77.1°C"
 
 
-def test_otbor_tela_t_start_republishes_work_when_flag_otb_matches(
-    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
-):
-    monitor = widget_monitor
-    emitted = publish_capture(monitor)
-    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
-    monitor.all_latest_values["flag_otb"] = "отбор тела"
-
-    monitor.term_c_min_telo_spinbox.setValue(77.1)
-    click_set_button(qtbot, monitor, find_push_button, index=3)
-
-    assert emitted == [("term_c_min_new", "77.1")]
-    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
-
-    scheduled_callbacks[0][1]()
-
-    assert emitted == [("term_c_min_new", "77.1"), ("work", "8")]
-
-
 def test_otbor_tela_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publish_capture, find_push_button):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
@@ -201,36 +124,170 @@ def test_otbor_tela_pwm_button_uses_spinbox_value(qtbot, widget_monitor, publish
     assert monitor.status_label.text() == "Запрос ШИМ отбора тела: 42%"
 
 
-def test_otbor_tela_pwm_republishes_work_when_flag_otb_matches(
+def test_last_work_command_label_follows_work_messages_from_broker(widget_monitor):
+    monitor = widget_monitor
+    assert monitor.last_work_command_label.text() == "Последняя команда режима работы: неизвестна"
+
+    monitor.handle_message("work", "8")
+    assert monitor.last_work_command_label.text() == "Последняя команда режима работы: отбор тела (8)"
+
+    monitor.handle_message("work", "99")
+    assert monitor.last_work_command_label.text() == "Последняя команда режима работы: неизвестна"
+
+
+def test_heads_pwm_republishes_work_when_device_is_confirmed_in_heads_mode(
     qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
     scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
-    monitor.all_latest_values["flag_otb"] = "отбор тела"
+    monitor.handle_message("work", "9")
+    monitor.handle_message("flag_otb", "Golov")
 
-    monitor.otbor_t_spinbox.setValue(42)
-    click_set_button(qtbot, monitor, find_push_button, index=4)
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
 
-    assert emitted == [("otbor_t_new", "42")]
-    assert scheduled_callbacks[0][0] == qt_client.WORK_MODE_REPUBLISH_DELAY_MS
+    assert emitted == [("otbor_g_1_new", "33")]
+    assert [delay for delay, _callback in scheduled_callbacks] == [qt_client.WORK_MODE_REPUBLISH_DELAY_MS]
 
     scheduled_callbacks[0][1]()
 
-    assert emitted == [("otbor_t_new", "42"), ("work", "8")]
+    assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
+    assert work_mode_unknown_dialogs(monitor) == []
 
 
-def test_otbor_tela_pwm_does_not_republish_work_when_in_heads_mode(
-    qtbot, widget_monitor, publish_capture, find_push_button
+@pytest.mark.parametrize("flag_otb", ["Telo", "OFF"])
+@pytest.mark.parametrize("button_index, spinbox_name, value, expected_publish", BODY_TAKEOFF_PARAMETER_BUTTONS)
+def test_body_parameter_republishes_work_when_device_is_confirmed_in_body_mode(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button,
+    flag_otb, button_index, spinbox_name, value, expected_publish,
+):
+    # "OFF" is the start-stop pause. The device is still in body takeoff.
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "8")
+    monitor.handle_message("flag_otb", flag_otb)
+
+    getattr(monitor, spinbox_name).setValue(value)
+    click_set_button(qtbot, monitor, find_push_button, index=button_index)
+    scheduled_callbacks[0][1]()
+
+    assert emitted == [expected_publish, ("work", "8")]
+    assert work_mode_unknown_dialogs(monitor) == []
+
+
+def test_heads_pwm_asks_operator_when_last_work_command_is_unknown(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
+):
+    # flag_otb alone is not enough: "Golov" does not tell which heads takeoff mode is active.
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("flag_otb", "Golov")
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert emitted == [("otbor_g_1_new", "33")]
+    assert scheduled_callbacks == []
+    dialogs = work_mode_unknown_dialogs(monitor)
+    assert len(dialogs) == 1
+    assert dialogs[0].isVisible()
+    assert dialogs[0].windowTitle() == "Режим работы неизвестен"
+
+
+def test_heads_pwm_asks_operator_when_flag_otb_does_not_confirm_heads_mode(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
 ):
     monitor = widget_monitor
     emitted = publish_capture(monitor)
-    monitor.all_latest_values["flag_otb"] = "отбор голов покапельно"
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "9")
+    monitor.handle_message("flag_otb", "OFF")
 
-    monitor.otbor_t_spinbox.setValue(42)
-    click_set_button(qtbot, monitor, find_push_button, index=4)
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
 
-    assert emitted == [("otbor_t_new", "42")]
+    assert emitted == [("otbor_g_1_new", "33")]
+    assert scheduled_callbacks == []
+    assert len(work_mode_unknown_dialogs(monitor)) == 1
+
+
+@pytest.mark.parametrize("flag_otb", ["End", "Error"])
+def test_body_takeoff_stop_forgets_last_work_command_and_blocks_republish(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button, flag_otb
+):
+    # The real device reports End or Error, then OFF. OFF must not restart body takeoff.
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "8")
+    monitor.handle_message("flag_otb", "Telo")
+    monitor.handle_message("flag_otb", flag_otb)
+    monitor.handle_message("flag_otb", "OFF")
+
+    assert monitor.last_work_command_label.text() == "Последняя команда режима работы: неизвестна"
+
+    monitor.term_c_max_telo_spinbox.setValue(78.4)
+    click_set_button(qtbot, monitor, find_push_button, index=2)
+
+    assert emitted == [("term_c_max_new", "78.4")]
+    assert scheduled_callbacks == []
+    assert len(work_mode_unknown_dialogs(monitor)) == 1
+
+
+def test_body_parameter_during_heat_up_neither_republishes_nor_asks_operator(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
+):
+    # The device stores the value and uses it when body takeoff starts.
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", str(WorkState.RAZGON.value))
+    monitor.handle_message("flag_otb", "OFF")
+
+    monitor.term_c_max_telo_spinbox.setValue(78.4)
+    click_set_button(qtbot, monitor, find_push_button, index=2)
+
+    assert emitted == [("term_c_max_new", "78.4")]
+    assert scheduled_callbacks == []
+    assert work_mode_unknown_dialogs(monitor) == []
+
+
+def test_second_unconfirmed_parameter_change_does_not_open_second_popup(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    capture_scheduled_callbacks(monkeypatch)
+
+    monitor.term_c_max_telo_spinbox.setValue(78.4)
+    click_set_button(qtbot, monitor, find_push_button, index=2)
+    monitor.term_c_min_telo_spinbox.setValue(77.1)
+    click_set_button(qtbot, monitor, find_push_button, index=3)
+
+    assert emitted == [("term_c_max_new", "78.4"), ("term_c_min_new", "77.1")]
+    dialogs = work_mode_unknown_dialogs(monitor)
+    assert len(dialogs) == 1
+    assert dialogs[0].isVisible()
+
+
+def test_delayed_republish_is_skipped_if_takeoff_stops_during_delay(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "9")
+    monitor.handle_message("flag_otb", "Golov")
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    monitor.handle_message("flag_otb", "End")
+    scheduled_callbacks[0][1]()
+
+    assert emitted == [("otbor_g_1_new", "33")]
 
 
 def test_reset_t_kub_button_updates_flags_and_status(qtbot, widget_monitor):

@@ -95,11 +95,13 @@ def test_on_disconnect_expected(signal_collector):
 def test_on_disconnect_unexpected_adds_reconnect_message(signal_collector):
     worker = build_worker()
     events = signal_collector(worker.connectionStatus)
+    disconnected_events = signal_collector(worker.disconnected)
 
     worker.on_disconnect(None, None, 1)
 
     assert len(events) == 2
     assert "Попытка переподключения" in events[1][0]
+    assert disconnected_events == [()]
 
 
 def test_publish_message_success(signal_collector):

@@ -207,7 +207,7 @@ def test_telemetry_numeric_rendering_updates_main_labels_exactly(widget_monitor)
             "term_k": "58.91",
             "power": "1200.25",
             "press_a": "760.48",
-            "flag_otb": "разгон",
+            "flag_otb": "Golov",
         }
     )
     monitor.last_mqtt_message_time = datetime(2026, 5, 9, 10, 11, 12)
@@ -219,7 +219,7 @@ def test_telemetry_numeric_rendering_updates_main_labels_exactly(widget_monitor)
     assert monitor.term_k_label.text() == "T куб:     58.9 °C"
     assert monitor.power_label.text() == "Мощность: 1200.2 Вт"
     assert monitor.press_a_label.text() == "Атм. давл.: 760.5 мм.рт.ст"
-    assert monitor.flag_otb_label.text() == "Флаг отбора: разгон"
+    assert monitor.flag_otb_label.text() == "Флаг отбора: Golov"
 
 
 def test_telemetry_control_current_values_render_exactly(widget_monitor):
