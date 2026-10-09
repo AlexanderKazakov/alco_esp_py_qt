@@ -153,6 +153,47 @@ def test_integration_otbor_golov_pwm_republishes_active_work_mode(
     ]
 
 
+def test_integration_heads_pwm_value_confirmations_follow_device_reports(
+    qtbot,
+    integration_monitor,
+    integration_secrets,
+    mqtt_publisher_client,
+    mqtt_subscriber_factory,
+    find_push_button,
+):
+    monitor = integration_monitor
+    prefix = integration_secrets["username"]
+
+    monitor.work_mode_combobox.setCurrentIndex(
+        monitor.work_mode_combobox.findData(WorkState.OTBOR_GOLOV_POKAPELNO.value)
+    )
+    qtbot.mouseClick(monitor.set_work_mode_button, Qt.LeftButton)
+    qtbot.waitUntil(
+        lambda: monitor.last_work_command_label.text()
+        == "Последняя команда режима работы: отбор голов покапельно (9)",
+        timeout=4000,
+    )
+    _publish_prefixed(mqtt_publisher_client, integration_secrets, "flag_otb", "Golov")
+    _publish_prefixed(mqtt_publisher_client, integration_secrets, "otbor", "15")
+    qtbot.waitUntil(lambda: monitor.all_latest_values.get("otbor") == "15", timeout=4000)
+    broker_messages = mqtt_subscriber_factory(f"{prefix}/#")
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    _click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    # The device stores the new value and reports it.
+    _publish_prefixed(mqtt_publisher_client, integration_secrets, "otbor_g_1", "33")
+    qtbot.waitUntil(lambda: "otbor_g_1" not in monitor._pending_value_confirmations, timeout=4000)
+
+    # After the work re-send the device uses the new PWM.
+    qtbot.waitUntil(lambda: (f"{prefix}/work", "9") in broker_messages, timeout=7000)
+    assert "otbor" in monitor._pending_value_confirmations
+    _publish_prefixed(mqtt_publisher_client, integration_secrets, "otbor", "33")
+    qtbot.waitUntil(lambda: monitor._pending_value_confirmations == {}, timeout=4000)
+
+    assert monitor.current_alarm_dialog is None
+
+
 def test_integration_mqtt_disconnect_forgets_last_work_command(qtbot, integration_monitor):
     monitor = integration_monitor
 

@@ -45,7 +45,12 @@ pip install -r requirements_ubuntu_64bit.txt
 
 echo "Packages installed."
 
-# 4. Run PyInstaller
+# 4. Write the git commit for the app version log line. A build has no git checkout.
+VERSION_FILE="$BUILD_ROOT/build_version.txt"
+git describe --always --dirty > "$VERSION_FILE" || echo "unknown" > "$VERSION_FILE"
+echo "App version: $(cat "$VERSION_FILE")"
+
+# 5. Run PyInstaller
 echo "Running PyInstaller..."
 pyinstaller \
     --noconfirm \
@@ -55,6 +60,7 @@ pyinstaller \
     --add-data "$SCRIPT_DIR/alco_esp/alarm.wav:./alco_esp" \
     --add-data "$SCRIPT_DIR/alco_esp/app_icon.png:./alco_esp" \
     --add-data "$SCRIPT_DIR/alco_esp/secrets_template.json:./alco_esp" \
+    --add-data "$SCRIPT_DIR/$VERSION_FILE:./alco_esp" \
     --distpath "$DIST_DIR" \
     --workpath "$WORK_DIR" \
     --specpath "$BUILD_ROOT" \
@@ -62,11 +68,11 @@ pyinstaller \
 
 echo "PyInstaller finished."
 
-# 5. Deactivate Virtual Environment (optional but good practice)
+# 6. Deactivate Virtual Environment (optional but good practice)
 echo "Deactivating virtual environment..."
 deactivate
 
-# 6. Clean up build directory (optional)
+# 7. Clean up build directory (optional)
 # echo "Cleaning up temporary build directory '$WORK_DIR'..."
 # rm -rf "$WORK_DIR"
 # Consider cleaning the entire BUILD_ROOT if desired:

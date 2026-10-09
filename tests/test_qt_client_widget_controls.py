@@ -1,9 +1,12 @@
+import logging
+
 import pytest
 from PyQt5.QtCore import Qt
 
 from alco_esp import qt_client
 from alco_esp.child_dialogs import WorkModeUnknownDialog
 from alco_esp.constants import STYLE_MONITORING, WorkState
+from alco_esp.settings import VALUE_CONFIRMATION_TIMEOUT
 
 
 def click_set_button(qtbot, monitor, find_push_button, index):
@@ -30,6 +33,44 @@ BODY_TAKEOFF_PARAMETER_BUTTONS = [
     pytest.param(3, "term_c_min_telo_spinbox", 77.1, ("term_c_min_new", "77.1"), id="t_start"),
     pytest.param(4, "otbor_t_spinbox", 42, ("otbor_t_new", "42"), id="pwm"),
 ]
+
+# The device reports the stored value on the paired topic. The real device adds a leading space to some numbers.
+TAKEOFF_PARAMETER_CONFIRMATIONS = [
+    pytest.param(
+        1, "otbor_g_1_spinbox", 33, "otbor_g_1", " 33",
+        "Проверено: ШИМ отбора голов покапельно, % = 33", id="heads_pwm",
+    ),
+    pytest.param(
+        2, "term_c_max_telo_spinbox", 78.4, "term_c_max", "78.4",
+        "Проверено: Температура старт-стопа, °C = 78.4", id="body_t_stop",
+    ),
+    pytest.param(
+        3, "term_c_min_telo_spinbox", 77.1, "term_c_min", "77.1",
+        "Проверено: Температура возобновления отбора, °C = 77.1", id="body_t_start",
+    ),
+    pytest.param(
+        4, "otbor_t_spinbox", 42, "otbor_t", "42",
+        "Проверено: ШИМ отбора тела, % = 42", id="body_pwm",
+    ),
+]
+
+
+def capture_alarms(monkeypatch, monitor):
+    alarms = []
+    monkeypatch.setattr(monitor, "alarm_message_with_sound", lambda message: alarms.append(message))
+    return alarms
+
+
+def start_heads_pwm_republish(qtbot, monkeypatch, monitor, find_push_button, pwm_value):
+    """Puts the app in confirmed heads takeoff, sets the heads PWM and runs the delayed work re-send."""
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "9")
+    monitor.handle_message("flag_otb", "Golov")
+    monitor.handle_message("otbor", "15")
+    monitor.otbor_g_1_spinbox.setValue(pwm_value)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+    monitor.handle_message("otbor_g_1", str(pwm_value))
+    scheduled_callbacks[0][1]()
 
 
 def test_work_mode_stop_click_emits_and_resets_combobox(qtbot, widget_monitor, publish_capture):
@@ -288,6 +329,244 @@ def test_delayed_republish_is_skipped_if_takeoff_stops_during_delay(
     scheduled_callbacks[0][1]()
 
     assert emitted == [("otbor_g_1_new", "33")]
+    assert "otbor" not in monitor._pending_value_confirmations
+
+
+@pytest.mark.parametrize(
+    "button_index, spinbox_name, value, report_topic, reported_payload, expected_status",
+    TAKEOFF_PARAMETER_CONFIRMATIONS,
+)
+def test_parameter_button_waits_for_device_to_report_the_stored_value(
+    qtbot, monkeypatch, widget_monitor, find_push_button,
+    button_index, spinbox_name, value, report_topic, reported_payload, expected_status,
+):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+    alarms = capture_alarms(monkeypatch, monitor)
+    monitor.handle_message(report_topic, "10")
+
+    getattr(monitor, spinbox_name).setValue(value)
+    click_set_button(qtbot, monitor, find_push_button, index=button_index)
+
+    timer = monitor._pending_value_confirmations[report_topic].timer
+    assert timer.isActive()
+    assert timer.isSingleShot()
+    assert timer.interval() == VALUE_CONFIRMATION_TIMEOUT * 1000
+
+    # A report with the old value can arrive first. It does not fail the check.
+    monitor.handle_message(report_topic, "10")
+    assert report_topic in monitor._pending_value_confirmations
+
+    monitor.handle_message(report_topic, reported_payload)
+
+    assert report_topic not in monitor._pending_value_confirmations
+    assert not timer.isActive()
+    assert monitor.status_label.text() == expected_status
+    assert alarms == []
+
+
+def test_parameter_confirmation_timeout_shows_alarm_with_last_reported_value(
+    qtbot, monkeypatch, widget_monitor, find_push_button
+):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+    alarms = capture_alarms(monkeypatch, monitor)
+    monkeypatch.setattr(qt_client, "VALUE_CONFIRMATION_TIMEOUT", 0.05)
+    monitor.handle_message("otbor_g_1", " 15")
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    # The real timer runs out because the device reports only the old value.
+    qtbot.waitUntil(lambda: len(alarms) == 1, timeout=2000)
+    assert alarms[0] == (
+        "ОШИБКА: устройство не подтвердило значение за 0.05 с. "
+        "ШИМ отбора голов покапельно, %: ожидается 33, устройство сообщает 15."
+    )
+    assert monitor._pending_value_confirmations == {}
+
+
+def test_parameter_confirmation_timeout_without_any_report(
+    qtbot, monkeypatch, widget_monitor, find_push_button
+):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+    alarms = capture_alarms(monkeypatch, monitor)
+
+    monitor.term_c_max_telo_spinbox.setValue(78.4)
+    click_set_button(qtbot, monitor, find_push_button, index=2)
+    monitor._value_confirmation_timeout("term_c_max")
+
+    assert alarms == [
+        f"ОШИБКА: устройство не подтвердило значение за {VALUE_CONFIRMATION_TIMEOUT} с. "
+        "Температура старт-стопа, °C: ожидается 78.4, устройство сообщает нет данных."
+    ]
+    assert monitor._pending_value_confirmations == {}
+
+
+def test_second_click_on_same_parameter_replaces_the_value_confirmation(
+    qtbot, monkeypatch, widget_monitor, find_push_button
+):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+    alarms = capture_alarms(monkeypatch, monitor)
+
+    monitor.otbor_g_1_spinbox.setValue(20)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+    first_timer = monitor._pending_value_confirmations["otbor_g_1"].timer
+    monitor.otbor_g_1_spinbox.setValue(25)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert not first_timer.isActive()
+    assert list(monitor._pending_value_confirmations) == ["otbor_g_1"]
+
+    # Only the latest value confirms the check.
+    monitor.handle_message("otbor_g_1", "20")
+    assert "otbor_g_1" in monitor._pending_value_confirmations
+    monitor.handle_message("otbor_g_1", "25")
+    assert monitor._pending_value_confirmations == {}
+    assert alarms == []
+
+
+def test_heads_pwm_republish_waits_for_device_to_use_the_new_pwm(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    alarms = capture_alarms(monkeypatch, monitor)
+
+    start_heads_pwm_republish(qtbot, monkeypatch, monitor, find_push_button, pwm_value=33)
+
+    assert emitted == [("otbor_g_1_new", "33"), ("work", "9")]
+    assert monitor._pending_value_confirmations["otbor"].timer.isActive()
+
+    # The real device log has a report with the old PWM right after the re-send.
+    monitor.handle_message("otbor", "15")
+    assert "otbor" in monitor._pending_value_confirmations
+
+    monitor.handle_message("otbor", "33")
+
+    assert monitor._pending_value_confirmations == {}
+    assert monitor.status_label.text() == "Проверено: Текущий ШИМ отбора, % = 33"
+    assert alarms == []
+
+
+def test_active_pwm_confirmation_timeout_shows_alarm(
+    qtbot, monkeypatch, widget_monitor, find_push_button
+):
+    monitor = widget_monitor
+    alarms = capture_alarms(monkeypatch, monitor)
+
+    start_heads_pwm_republish(qtbot, monkeypatch, monitor, find_push_button, pwm_value=33)
+    monitor._value_confirmation_timeout("otbor")
+
+    assert alarms == [
+        f"ОШИБКА: устройство не подтвердило значение за {VALUE_CONFIRMATION_TIMEOUT} с. "
+        "Текущий ШИМ отбора, %: ожидается 33, устройство сообщает 15."
+    ]
+
+
+def test_body_pwm_republish_waits_for_device_to_use_the_new_pwm(
+    qtbot, monkeypatch, widget_monitor, find_push_button
+):
+    monitor = widget_monitor
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "8")
+    monitor.handle_message("flag_otb", "Telo")
+
+    monitor.otbor_t_spinbox.setValue(42)
+    click_set_button(qtbot, monitor, find_push_button, index=4)
+    scheduled_callbacks[0][1]()
+
+    assert monitor._pending_value_confirmations["otbor"].expected_payload == "42"
+
+
+def test_body_temperature_republish_does_not_wait_for_active_pwm(
+    qtbot, monkeypatch, widget_monitor, publish_capture, find_push_button
+):
+    monitor = widget_monitor
+    emitted = publish_capture(monitor)
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", "8")
+    monitor.handle_message("flag_otb", "Telo")
+
+    monitor.term_c_max_telo_spinbox.setValue(78.4)
+    click_set_button(qtbot, monitor, find_push_button, index=2)
+    scheduled_callbacks[0][1]()
+
+    assert emitted == [("term_c_max_new", "78.4"), ("work", "8")]
+    assert list(monitor._pending_value_confirmations) == ["term_c_max"]
+
+
+def test_parameter_without_work_republish_does_not_wait_for_active_pwm(
+    qtbot, monkeypatch, widget_monitor, find_push_button
+):
+    # During heat-up the device uses the new PWM only when heads takeoff starts.
+    monitor = widget_monitor
+    scheduled_callbacks = capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", str(WorkState.RAZGON.value))
+    monitor.handle_message("flag_otb", "OFF")
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert scheduled_callbacks == []
+    assert list(monitor._pending_value_confirmations) == ["otbor_g_1"]
+
+
+@pytest.mark.parametrize(
+    "device_payload, expected_device_text",
+    [
+        pytest.param(None, "The device has not reported otbor_g_1 yet.", id="no_report"),
+        pytest.param(" 15", "The device reports otbor_g_1=15.", id="other_value"),
+        pytest.param("33", "The device reports otbor_g_1=33. The value does not change.", id="same_value"),
+    ],
+)
+def test_parameter_request_log_line_shows_device_value(
+    qtbot, monkeypatch, caplog, widget_monitor, find_push_button, device_payload, expected_device_text
+):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+    if device_payload is not None:
+        monitor.handle_message("otbor_g_1", device_payload)
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    with caplog.at_level(logging.INFO, logger="AlcoEspMonitorApp"):
+        click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert f"Requesting otbor_g_1_new=33. {expected_device_text}" in caplog.messages
+
+
+def test_not_re_sending_work_log_line_shows_flag_otb(
+    qtbot, monkeypatch, caplog, widget_monitor, find_push_button
+):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+    monitor.handle_message("work", str(WorkState.RAZGON.value))
+    monitor.handle_message("flag_otb", "OFF")
+
+    with caplog.at_level(logging.INFO, logger="AlcoEspMonitorApp"):
+        click_set_button(qtbot, monitor, find_push_button, index=1)
+
+    assert (
+        "Not re-sending work: last work command is 4, flag_otb: OFF, "
+        "the parameter is for отбор голов покапельно (9)"
+    ) in caplog.messages
+
+
+def test_value_confirmation_log_lines(qtbot, monkeypatch, caplog, widget_monitor, find_push_button):
+    monitor = widget_monitor
+    capture_scheduled_callbacks(monkeypatch)
+
+    monitor.otbor_g_1_spinbox.setValue(33)
+    with caplog.at_level(logging.INFO, logger="AlcoEspMonitorApp"):
+        click_set_button(qtbot, monitor, find_push_button, index=1)
+        monitor.handle_message("otbor_g_1", "33")
+
+    assert (
+        f"Waiting up to {VALUE_CONFIRMATION_TIMEOUT} s for the device to report otbor_g_1=33" in caplog.messages
+    )
+    assert any(message.startswith("OK: the device reported otbor_g_1=33 after ") for message in caplog.messages)
 
 
 def test_reset_t_kub_button_updates_flags_and_status(qtbot, widget_monitor):

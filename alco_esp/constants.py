@@ -44,6 +44,22 @@ FLAG_OTB_VALUES_BY_WORK_MODE = {
 # flag_otb values that the device reports when a takeoff stops.
 FLAG_OTB_TAKEOFF_STOPPED_VALUES = {"End", "Error"}
 
+# The app sends a new takeoff parameter to the "_new" topic.
+# The device stores it and reports the stored value on the paired topic.
+TAKEOFF_PARAMETER_REPORT_TOPICS = {
+    "otbor_g_1_new": "otbor_g_1",
+    "term_c_max_new": "term_c_max",
+    "term_c_min_new": "term_c_min",
+    "otbor_t_new": "otbor_t",
+}
+
+# The device reports on this topic the takeoff PWM that it uses now.
+# It changes to a new stored PWM only after work is set again.
+ACTIVE_TAKEOFF_PWM_TOPIC = "otbor"
+
+# Received messages are DEBUG log lines. A change of these device values also gets an INFO log line.
+VALUE_CHANGE_LOG_TOPICS = ["flag_otb", "otbor", "otbor_g_1", "otbor_t", "term_c_max", "term_c_min", "term_k_m"]
+
 CHART_TEMPERATURE_TOPICS = ["term_d", "term_c", "term_k"]
 
 TOPICS_OF_MAIN_INTEREST = CHART_TEMPERATURE_TOPICS + ["power", "press_a", "flag_otb"]

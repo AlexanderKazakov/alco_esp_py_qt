@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 import pytest
@@ -93,6 +94,38 @@ def test_handle_message_calls_term_k_m_confirmation_when_pending(monkeypatch, mo
     monitor.handle_message("term_k_m", "70.0")
 
     assert calls == ["70.0"]
+
+
+def test_handle_message_logs_device_value_changes_at_info_level(monkeypatch, caplog, monitor_fixture):
+    monitor = monitor_fixture
+    monkeypatch.setattr(qt_client, "all_data_logger", CapturingLogger())
+    monkeypatch.setattr(qt_client, "main_data_logger", CapturingLogger())
+
+    with caplog.at_level(logging.INFO, logger="AlcoEspMonitorApp"):
+        monitor.handle_message("otbor_g_1", "15")
+        monitor.handle_message("otbor_g_1", "15")
+        monitor.handle_message("otbor_g_1", " 5")
+        monitor.handle_message("otbor_g_1", "5")
+        monitor.handle_message("flag_otb", "Golov")
+
+    value_lines = [message for message in caplog.messages if message.startswith("Device value")]
+    assert value_lines == [
+        "Device value: otbor_g_1=15 (first report)",
+        "Device value changed: otbor_g_1=5 (was 15)",
+        "Device value: flag_otb=Golov (first report)",
+    ]
+
+
+def test_handle_message_does_not_log_values_of_other_topics_at_info_level(monkeypatch, caplog, monitor_fixture):
+    monitor = monitor_fixture
+    monkeypatch.setattr(qt_client, "all_data_logger", CapturingLogger())
+    monkeypatch.setattr(qt_client, "main_data_logger", CapturingLogger())
+
+    with caplog.at_level(logging.INFO, logger="AlcoEspMonitorApp"):
+        monitor.handle_message("term_k", "75.0")
+        monitor.handle_message("term_k", "76.0")
+
+    assert [message for message in caplog.messages if message.startswith("Device value")] == []
 
 
 def test_handle_message_invalid_chart_payload_does_not_append(monkeypatch, monitor_fixture):

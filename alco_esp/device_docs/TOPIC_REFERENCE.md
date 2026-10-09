@@ -28,6 +28,10 @@ These topics are published by the device. You subscribe to them to read the devi
 
 For these, the device publishes its current state on one topic, and you publish a new value to a corresponding `_new` topic to change it.
 
+Seen on the real device:
+- The device reports the stored value on the read topic about 0.1 to 0.3 s after a `_new` message.
+- The device uses a new takeoff PWM (`otbor_g_1`, `otbor_t`) only after `work` is set again. Then `otbor` shows the new PWM after about 1.3 s. A report with the old `otbor` value can arrive before that.
+
 | State Topic (Read) | Command Topic (Write) | Description |
 |--------------------|-----------------------|-------------|
 | `term_d_m`         | `term_d_m_new`        | Аварийная температура в дефлегматоре (Dephlegmator emergency temp) |

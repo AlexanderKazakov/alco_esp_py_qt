@@ -60,7 +60,14 @@ IF ERRORLEVEL 1 (
 
 ECHO Packages installed.
 
-REM 4. Run PyInstaller
+REM 4. Write the git commit for the app version log line. A build has no git checkout.
+SET "VERSION_FILE=%BUILD_ROOT%\build_version.txt"
+git describe --always --dirty > "%VERSION_FILE%" 2>NUL
+IF ERRORLEVEL 1 ECHO unknown> "%VERSION_FILE%"
+ECHO App version:
+TYPE "%VERSION_FILE%"
+
+REM 5. Run PyInstaller
 ECHO Running PyInstaller...
 pyinstaller ^
     --noconfirm ^
@@ -70,6 +77,7 @@ pyinstaller ^
     --add-data "%SCRIPT_DIR%\alco_esp\alarm.wav;.\alco_esp" ^
     --add-data "%SCRIPT_DIR%\alco_esp\app_icon.png;.\alco_esp" ^
     --add-data "%SCRIPT_DIR%\alco_esp\secrets_template.json;.\alco_esp" ^
+    --add-data "%SCRIPT_DIR%\%VERSION_FILE%;.\alco_esp" ^
     --distpath "%DIST_DIR%" ^
     --workpath "%WORK_DIR%" ^
     --specpath "%BUILD_ROOT%" ^
@@ -83,7 +91,7 @@ IF ERRORLEVEL 1 (
 
 ECHO PyInstaller finished.
 
-REM 5. Deactivate Virtual Environment (optional but good practice)
+REM 6. Deactivate Virtual Environment (optional but good practice)
 :DEACTIVATE_VENV
 ECHO Deactivating virtual environment...
 CALL deactivate
@@ -94,7 +102,7 @@ IF EXIST "%VENV_DIR%\Scripts\deactivate.bat" (
 )
 
 
-REM 6. Clean up build directory (optional)
+REM 7. Clean up build directory (optional)
 REM ECHO Cleaning up temporary build directory '%WORK_DIR%'...
 REM IF EXIST "%WORK_DIR%" RMDIR /S /Q "%WORK_DIR%"
 REM Consider cleaning the entire BUILD_ROOT if desired:

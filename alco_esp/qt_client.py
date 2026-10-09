@@ -12,6 +12,7 @@ from PyQt5.QtMultimedia import QSoundEffect
 from collections import deque
 from datetime import datetime, timedelta
 
+from alco_esp.app_version import get_app_version
 from alco_esp.application_icon import (
     apply_application_icon,
     apply_window_icon,
@@ -71,6 +72,25 @@ def parse_work_mode_code(payload):
     except (TypeError, ValueError):
         return None
     return mode_code if mode_code in WORK_STATE_NAMES else None
+
+
+def payload_values_match(payload_a, payload_b):
+    """Returns True if both payloads are numbers and equal within 0.01."""
+    try:
+        return abs(float(payload_a) - float(payload_b)) < 0.01
+    except (TypeError, ValueError):
+        return False
+
+
+class PendingValueConfirmation:
+    """
+    A value confirmation waits until the device reports the value that the app sent.
+    If the timer runs out first, the app shows an alarm.
+    """
+    def __init__(self, expected_payload, timer):
+        self.expected_payload = expected_payload
+        self.start_time = datetime.now()
+        self.timer = timer
 
 
 def nearest_sample_index(sorted_times, target_time):
@@ -198,6 +218,9 @@ class AlcoEspMonitor(QMainWindow):
         # or None if the app is not sure about it.
         self._last_work_command = None
         self.work_mode_unknown_dialog = None
+
+        # Value confirmations that wait for a device report, by report topic.
+        self._pending_value_confirmations = {}
 
         # --- Initialize Sound Effect and Alarm Dialog (placeholder, actual init deferred) ---
         self.alarm_sound_effect = QSoundEffect(self)
@@ -693,10 +716,12 @@ class AlcoEspMonitor(QMainWindow):
         flag_otb = str(self.all_latest_values.get("flag_otb", "")).strip()
         return flag_otb in FLAG_OTB_VALUES_BY_WORK_MODE[mode_code]
 
-    def _schedule_work_mode_republish_or_warn(self, mode_code):
+    def _schedule_work_mode_republish_or_warn(self, mode_code, active_pwm_payload=None):
         """
         The device applies a new takeoff parameter only after work is set again.
         If the device is confirmed in mode_code, schedules a work re-send.
+        active_pwm_payload is the new PWM, or None if the parameter is not a PWM.
+        If it is set, the re-send also starts a value confirmation for the PWM that the device uses now.
         If the last work command is another mode, does nothing. The device uses the new value when that mode starts.
         Otherwise asks the operator to set the work mode again.
         """
@@ -708,12 +733,13 @@ class AlcoEspMonitor(QMainWindow):
             )
             QTimer.singleShot(
                 WORK_MODE_REPUBLISH_DELAY_MS,
-                lambda: self._republish_work_mode_if_active(mode_code),
+                lambda: self._republish_work_mode_if_active(mode_code, active_pwm_payload),
             )
             return
         if self._last_work_command is not None and self._last_work_command != mode_code:
             logger.info(
                 f"Not re-sending work: last work command is {self._last_work_command}, "
+                f"flag_otb: {self.all_latest_values.get('flag_otb')}, "
                 f"the parameter is for {mode_name} ({mode_code})"
             )
             return
@@ -731,23 +757,106 @@ class AlcoEspMonitor(QMainWindow):
         self.work_mode_unknown_dialog.raise_()
         self.work_mode_unknown_dialog.activateWindow()
 
-    def _republish_work_mode_if_active(self, mode_code):
-        """Re-sends work if the device is still confirmed in the expected mode."""
+    def _republish_work_mode_if_active(self, mode_code, active_pwm_payload=None):
+        """
+        Re-sends work if the device is still confirmed in the expected mode.
+        If active_pwm_payload is set, starts a value confirmation for the PWM that the device uses now.
+        """
         mode_name = WORK_STATE_NAMES.get(mode_code, str(mode_code))
         if not self._is_work_mode_confirmed(mode_code):
             logger.info(f"Work mode replay skipped, {mode_name} ({mode_code}) is no longer confirmed")
             return
         logger.info(f"Re-publishing active work mode: {mode_name} ({mode_code})")
         self.publishRequested.emit(control_topics["work"], str(mode_code))
+        if active_pwm_payload is not None:
+            self._start_value_confirmation(ACTIVE_TAKEOFF_PWM_TOPIC, active_pwm_payload)
+
+    def _publish_takeoff_parameter(self, command_topic, payload, mode_code, is_pwm):
+        """
+        Sends a new takeoff parameter value and starts a value confirmation for the stored value.
+        Then re-sends work if the device is in mode_code, because the device applies the value only after that.
+        """
+        report_topic = TAKEOFF_PARAMETER_REPORT_TOPICS[command_topic]
+        logger.info(f"Requesting {command_topic}={payload}. {self._device_value_log_text(report_topic, payload)}")
+        self.publishRequested.emit(control_topics[command_topic], payload)
+        self._start_value_confirmation(report_topic, payload)
+        self._schedule_work_mode_republish_or_warn(mode_code, active_pwm_payload=payload if is_pwm else None)
+
+    def _device_value_log_text(self, report_topic, sent_payload):
+        """Returns log text that compares the sent value with the value that the device reports now."""
+        reported_payload = self.all_latest_values.get(report_topic)
+        if reported_payload is None:
+            return f"The device has not reported {report_topic} yet."
+        reported_payload = str(reported_payload).strip()
+        if payload_values_match(reported_payload, sent_payload):
+            return f"The device reports {report_topic}={reported_payload}. The value does not change."
+        return f"The device reports {report_topic}={reported_payload}."
+
+    def _start_value_confirmation(self, report_topic, expected_payload):
+        """
+        Waits until the device reports expected_payload on report_topic.
+        A report with another value does not fail the check, because an older report can arrive first.
+        Only the timeout fails the check.
+        """
+        self._stop_value_confirmation(report_topic)
+        # The timer has the window as parent, so it is deleted together with the window.
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._value_confirmation_timeout(report_topic))
+        self._pending_value_confirmations[report_topic] = PendingValueConfirmation(expected_payload, timer)
+        timer.start(int(VALUE_CONFIRMATION_TIMEOUT * 1000))
+        logger.info(f"Waiting up to {VALUE_CONFIRMATION_TIMEOUT} s for the device to report {report_topic}={expected_payload}")
+
+    def _check_value_confirmation(self, topic, payload_str):
+        """Finishes the value confirmation for topic if the device reports the expected value."""
+        confirmation = self._pending_value_confirmations.get(topic)
+        if confirmation is None or not payload_values_match(payload_str, confirmation.expected_payload):
+            return
+        seconds = (datetime.now() - confirmation.start_time).total_seconds()
+        logger.info(f"OK: the device reported {topic}={payload_str.strip()} after {seconds:.1f} s")
+        self._stop_value_confirmation(topic)
+        self.update_status(f"Проверено: {TOPIC_MEANINGS[topic]} = {confirmation.expected_payload}")
+
+    def _value_confirmation_timeout(self, report_topic):
+        """Shows an alarm because the device did not report the expected value in time."""
+        confirmation = self._pending_value_confirmations.get(report_topic)
+        if confirmation is None:
+            return
+        self._stop_value_confirmation(report_topic)
+        reported_payload = self.all_latest_values.get(report_topic)
+        if reported_payload is None:
+            logger.error(
+                f"The device did not report {report_topic}={confirmation.expected_payload} "
+                f"within {VALUE_CONFIRMATION_TIMEOUT} s. It has not reported {report_topic} at all."
+            )
+            reported_text = "нет данных"
+        else:
+            reported_text = str(reported_payload).strip()
+            logger.error(
+                f"The device did not report {report_topic}={confirmation.expected_payload} "
+                f"within {VALUE_CONFIRMATION_TIMEOUT} s. Last reported value: {reported_text}"
+            )
+        self.alarm_message_with_sound(
+            f"ОШИБКА: устройство не подтвердило значение за {VALUE_CONFIRMATION_TIMEOUT} с. "
+            f"{TOPIC_MEANINGS[report_topic]}: ожидается {confirmation.expected_payload}, "
+            f"устройство сообщает {reported_text}."
+        )
+
+    def _stop_value_confirmation(self, report_topic):
+        """Stops the value confirmation for report_topic, if there is one."""
+        confirmation = self._pending_value_confirmations.pop(report_topic, None)
+        if confirmation is not None:
+            confirmation.timer.stop()
+            confirmation.timer.deleteLater()
 
     def publish_otbor_g_1_speed(self):
         """Publishes the speed for 'otbor golov 1'."""
         try:
-            speed_val = int(self.otbor_g_1_spinbox.value())
-            logger.info(f"Requesting to set otbor golov speed (PWM): {speed_val}")
-            self.publishRequested.emit(control_topics["otbor_g_1_new"], str(speed_val))
-            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_GOLOV_POKAPELNO.value)
-            self.update_status(f"Запрос на ШИМ отбора голов: {speed_val}")
+            payload = str(int(self.otbor_g_1_spinbox.value()))
+            self._publish_takeoff_parameter(
+                "otbor_g_1_new", payload, WorkState.OTBOR_GOLOV_POKAPELNO.value, is_pwm=True
+            )
+            self.update_status(f"Запрос на ШИМ отбора голов: {payload}")
         except Exception as e:
             logger.error(f"Error preparing otbor golov speed publication: {e}", exc_info=True)
             self.update_status(f"Ошибка подготовки ШИМ отбора голов: {e}")
@@ -755,12 +864,8 @@ class AlcoEspMonitor(QMainWindow):
     def publish_term_c_max_telo(self):
         """Publishes the 'T stop' for 'otbor tela'."""
         try:
-            t_stop = self.term_c_max_telo_spinbox.value()
-            payload = f"{t_stop:.1f}"
-            log_msg = f"Requesting otbor tela T_stop={payload}"
-            logger.info(log_msg)
-            self.publishRequested.emit(control_topics["term_c_max_new"], payload)
-            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_TELA.value)
+            payload = f"{self.term_c_max_telo_spinbox.value():.1f}"
+            self._publish_takeoff_parameter("term_c_max_new", payload, WorkState.OTBOR_TELA.value, is_pwm=False)
             self.update_status(f"Запрос T стоп отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_stop publication: {e}", exc_info=True)
@@ -769,12 +874,8 @@ class AlcoEspMonitor(QMainWindow):
     def publish_term_c_min_telo(self):
         """Publishes the 'T start' for 'otbor tela'."""
         try:
-            t_start = self.term_c_min_telo_spinbox.value()
-            payload = f"{t_start:.1f}"
-            log_msg = f"Requesting otbor tela T_start={payload}"
-            logger.info(log_msg)
-            self.publishRequested.emit(control_topics["term_c_min_new"], payload)
-            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_TELA.value)
+            payload = f"{self.term_c_min_telo_spinbox.value():.1f}"
+            self._publish_takeoff_parameter("term_c_min_new", payload, WorkState.OTBOR_TELA.value, is_pwm=False)
             self.update_status(f"Запрос T старт отбора тела: {payload}°C")
         except Exception as e:
             logger.error(f"Error preparing otbor tela T_start publication: {e}", exc_info=True)
@@ -783,12 +884,9 @@ class AlcoEspMonitor(QMainWindow):
     def publish_otbor_t_pwm(self):
         """Publishes the PWM for 'otbor tela'."""
         try:
-            pwm_val = int(self.otbor_t_spinbox.value())
-            log_msg = f"Requesting otbor tela PWM={pwm_val}"
-            logger.info(log_msg)
-            self.publishRequested.emit(control_topics["otbor_t_new"], str(pwm_val))
-            self._schedule_work_mode_republish_or_warn(WorkState.OTBOR_TELA.value)
-            self.update_status(f"Запрос ШИМ отбора тела: {pwm_val}%")
+            payload = str(int(self.otbor_t_spinbox.value()))
+            self._publish_takeoff_parameter("otbor_t_new", payload, WorkState.OTBOR_TELA.value, is_pwm=True)
+            self.update_status(f"Запрос ШИМ отбора тела: {payload}%")
         except Exception as e:
             logger.error(f"Error preparing otbor tela PWM publication: {e}", exc_info=True)
             self.update_status(f"Ошибка ШИМ отбора тела: {e}")
@@ -862,11 +960,18 @@ class AlcoEspMonitor(QMainWindow):
             self.mqtt_data_timeout_alarm_active = False
 
         # --- Store all data ---
+        previous_payload = self.all_latest_values.get(topic)
         self.all_latest_values[topic] = payload_str
+        if topic in VALUE_CHANGE_LOG_TOPICS:
+            self._log_device_value_change(topic, previous_payload, payload_str)
 
         # --- Check for term_k_m confirmation if a check is pending ---
         if self.pending_term_k_m_check and topic == "term_k_m":
             self.check_term_k_m_confirmation(payload_str)
+
+        # --- Check value confirmations for takeoff parameters ---
+        if topic in self._pending_value_confirmations:
+            self._check_value_confirmation(topic, payload_str)
 
         # --- Track the last work command. The device never publishes work. ---
         if topic == "work":
@@ -913,6 +1018,16 @@ class AlcoEspMonitor(QMainWindow):
                 self.timestamps[topic].append(current_time)
             except ValueError:
                 logger.error(f"Could not convert payload '{payload_str}' for topic '{topic}' to number.")
+
+    def _log_device_value_change(self, topic, previous_payload, payload_str):
+        """Writes an INFO log line when the device reports a new value for topic."""
+        new_value = payload_str.strip()
+        if previous_payload is None:
+            logger.info(f"Device value: {topic}={new_value} (first report)")
+            return
+        previous_value = str(previous_payload).strip()
+        if previous_value != new_value:
+            logger.info(f"Device value changed: {topic}={new_value} (was {previous_value})")
 
     def check_term_k_m_confirmation(self, received_value_str):
         """Checks if the received term_k_m value matches the expected one and alarms if not."""
@@ -1558,7 +1673,7 @@ class AlcoEspMonitor(QMainWindow):
 
 
 if __name__ == '__main__':
-    logger.info("Application starting...")
+    logger.info(f"Application starting... Version: {get_app_version()}")
 
     apply_windows_app_user_model_id()
     app = QApplication(sys.argv)
