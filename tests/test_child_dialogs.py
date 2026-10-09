@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 import pytest
+from matplotlib.backend_bases import MouseEvent
+from matplotlib.backend_tools import Cursors
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import QMainWindow
 
@@ -204,3 +206,37 @@ def test_custom_toolbar_home_sets_default_window_without_data(qtbot):
     # With no data, toolbar enforces a short default horizon around "now".
     assert (x_max - x_min) > 0
     assert ax.get_autoscalex_on() is True
+
+
+def _make_canvas_with_custom_toolbar(qtbot):
+    fig, ax = plt.subplots()
+    canvas = FigureCanvas(fig)
+    parent = DummyMainWindow()
+    qtbot.addWidget(parent)
+    timestamps = {"term_k": [], "term_c": [], "term_d": []}
+    toolbar = child_dialogs.CustomNavigationToolbar(canvas, parent, timestamps)
+    qtbot.addWidget(toolbar)
+    return canvas, ax, toolbar
+
+
+def test_custom_toolbar_canvas_draw_never_sets_wait_cursor(qtbot, monkeypatch):
+    canvas, _ax, _toolbar = _make_canvas_with_custom_toolbar(qtbot)
+    cursors_set = []
+    monkeypatch.setattr(canvas, "set_cursor", cursors_set.append)
+
+    canvas.draw()
+
+    assert Cursors.WAIT not in cursors_set
+
+
+def test_custom_toolbar_pan_mode_still_sets_move_cursor(qtbot, monkeypatch):
+    canvas, ax, toolbar = _make_canvas_with_custom_toolbar(qtbot)
+    canvas.draw()
+    cursors_set = []
+    monkeypatch.setattr(canvas, "set_cursor", cursors_set.append)
+
+    toolbar.pan()
+    x, y = ax.transAxes.transform((0.5, 0.5))
+    canvas.callbacks.process("motion_notify_event", MouseEvent("motion_notify_event", canvas, x, y))
+
+    assert cursors_set == [Cursors.MOVE]

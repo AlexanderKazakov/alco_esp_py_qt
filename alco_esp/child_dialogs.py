@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from contextlib import contextmanager
 from datetime import timedelta, datetime
 
 from PyQt5.QtCore import QUrl, Qt
@@ -64,6 +65,16 @@ class CustomNavigationToolbar(NavigationToolbar):
         super().__init__(canvas, parent)
         self.main_window = parent
         self.timestamps_ref = timestamps_ref
+
+    @contextmanager
+    def _wait_cursor_for_draw_cm(self):
+        """Overrides the matplotlib method that shows the wait cursor during a canvas draw.
+
+        Matplotlib shows the wait cursor for each draw that comes more than 1 second
+        after the previous draw. The plot timer redraws the chart every 2 seconds,
+        so the cursor flickered while the mouse was over the chart.
+        """
+        yield
 
     def home(self, *args):
         """Overrides the default home button behavior to zoom to full data range
